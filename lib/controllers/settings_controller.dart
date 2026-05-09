@@ -502,7 +502,7 @@ class SettingsController extends GetxController {
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       systemNavigationBarColor:
-          isDark ? const Color(0xFF0A0A0F) : const Color(0xFFF8F9FA),
+          isDark ? Colors.black : Colors.white,
       systemNavigationBarIconBrightness:
           isDark ? Brightness.light : Brightness.dark,
     ));

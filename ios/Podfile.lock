@@ -75,6 +75,8 @@ PODS:
   - flutter_inappwebview_ios/Core (0.0.1):
     - Flutter
     - OrderedSet (~> 6.0.3)
+  - flutter_litert_lm (0.3.0):
+    - Flutter
   - flutter_local_notifications (0.0.1):
     - Flutter
   - GoogleDataTransport (10.1.0):
@@ -131,6 +133,7 @@ DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_background_service_ios (from `.symlinks/plugins/flutter_background_service_ios/ios`)
   - flutter_inappwebview_ios (from `.symlinks/plugins/flutter_inappwebview_ios/ios`)
+  - flutter_litert_lm (from `.symlinks/plugins/flutter_litert_lm/ios`)
   - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - llama_flutter_android (from `.symlinks/plugins/llama_flutter_android/ios`)
@@ -167,6 +170,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/flutter_background_service_ios/ios"
   flutter_inappwebview_ios:
     :path: ".symlinks/plugins/flutter_inappwebview_ios/ios"
+  flutter_litert_lm:
+    :path: ".symlinks/plugins/flutter_litert_lm/ios"
   flutter_local_notifications:
     :path: ".symlinks/plugins/flutter_local_notifications/ios"
   image_picker_ios:
@@ -192,6 +197,7 @@ SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_background_service_ios: e30e0d3ee69e4cee66272d0c78eacd48c2e94aac
   flutter_inappwebview_ios: 6f63631e2c62a7c350263b13fa5427aedefe81d4
+  flutter_litert_lm: 07a899d1d3f22806951c3be384bd13dae3951a41
   flutter_local_notifications: 4cde75091f6327eb8517fa068a0a5950212d2086
   GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
   GoogleUtilities: 00c88b9a86066ef77f0da2fab05f65d7768ed8e1
@@ -201,7 +207,7 @@ SPEC CHECKSUMS:
   OrderedSet: e539b66b644ff081c73a262d24ad552a69be3a94
   permission_handler_apple: 9878588469a2b0d0fc1e048d9f43605f92e6cec2
   PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
-  sd_flutter_android: e9b5ca6c513cd7eb424e53eda859b82defaa672a
+  sd_flutter_android: 119b9c0bd84bbb7040609b3f53429988f0f1c122
   SDWebImage: e9c98383c7572d713c1a0d7dd2783b10599b9838
   SwiftyGif: 706c60cf65fa2bc5ee0313beece843c8eb8194d4
 

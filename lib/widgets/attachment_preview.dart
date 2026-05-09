@@ -4,8 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../core/colors.dart';
-
 class AttachmentPreview extends StatelessWidget {
   final String fileName;
   final String? fileType;
@@ -28,23 +26,27 @@ class AttachmentPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final type = fileType ?? _typeFromName(fileName);
-    final color = _colorForType(type);
+    final color = _colorForType(type, isDark);
     final label = _labelForType(type);
 
     return Container(
-      constraints: compact ? const BoxConstraints(maxWidth: 280) : null,
-      padding: EdgeInsets.all(compact ? 8 : 10),
+      constraints: compact ? const BoxConstraints(maxWidth: 260) : null,
+      padding: EdgeInsets.all(compact ? 8 : 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.28)),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.06)
+            : Colors.black.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
         children: [
-          _leading(context, type, color),
+          // Leading icon/thumbnail
+          _leading(context, type, color, isDark),
           const SizedBox(width: 10),
+          // File info
           Flexible(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -55,22 +57,22 @@ class AttachmentPreview extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.inter(
-                    fontSize: compact ? 12 : 13,
+                    fontSize: compact ? 13 : 14,
                     color: Theme.of(context).colorScheme.onSurface,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   fileSize != null && fileSize! > 0
-                      ? '$label - ${formatFileSize(fileSize!)}'
+                      ? '$label · ${formatFileSize(fileSize!)}'
                       : label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.inter(
-                    fontSize: 11,
+                    fontSize: 12,
                     color: Theme.of(context).hintColor,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
               ],
@@ -78,13 +80,23 @@ class AttachmentPreview extends StatelessWidget {
           ),
           if (onRemove != null) ...[
             const SizedBox(width: 6),
-            IconButton(
-              onPressed: onRemove,
-              icon: const Icon(Icons.close_rounded, size: 18),
-              visualDensity: VisualDensity.compact,
-              color: Theme.of(context).hintColor,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            GestureDetector(
+              onTap: onRemove,
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.black.withValues(alpha: 0.06),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 14,
+                  color: Theme.of(context).hintColor,
+                ),
+              ),
             ),
           ],
         ],
@@ -92,19 +104,22 @@ class AttachmentPreview extends StatelessWidget {
     );
   }
 
-  Widget _leading(BuildContext context, String type, Color color) {
+  Widget _leading(BuildContext context, String type, Color color, bool isDark) {
     final image = _imageThumbnail();
     return ClipRRect(
-      borderRadius: BorderRadius.circular(9),
+      borderRadius: BorderRadius.circular(10),
       child: Container(
-        width: compact ? 38 : 44,
-        height: compact ? 38 : 44,
-        color: color.withValues(alpha: 0.16),
+        width: compact ? 36 : 42,
+        height: compact ? 36 : 42,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
         child: image ??
             Icon(
               _iconForType(type),
               color: color,
-              size: compact ? 20 : 23,
+              size: compact ? 18 : 20,
             ),
       ),
     );
@@ -152,20 +167,8 @@ class AttachmentPreview extends StatelessWidget {
     }
     if (ext == 'pdf') return 'pdf';
     if ([
-      'txt',
-      'md',
-      'json',
-      'csv',
-      'log',
-      'yaml',
-      'yml',
-      'xml',
-      'dart',
-      'kt',
-      'java',
-      'js',
-      'ts',
-      'py'
+      'txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'xml',
+      'dart', 'kt', 'java', 'js', 'ts', 'py'
     ].contains(ext)) {
       return 'text';
     }
@@ -174,46 +177,31 @@ class AttachmentPreview extends StatelessWidget {
 
   String _labelForType(String type) {
     switch (type) {
-      case 'image':
-        return 'Image';
-      case 'pdf':
-        return 'PDF';
-      case 'audio':
-        return 'Audio';
-      case 'text':
-        return 'Text file';
-      default:
-        return 'Attachment';
+      case 'image':  return 'Image';
+      case 'pdf':    return 'PDF';
+      case 'audio':  return 'Audio';
+      case 'text':   return 'Text file';
+      default:       return 'Attachment';
     }
   }
 
   IconData _iconForType(String type) {
     switch (type) {
-      case 'image':
-        return Icons.image_outlined;
-      case 'pdf':
-        return Icons.picture_as_pdf_outlined;
-      case 'audio':
-        return Icons.graphic_eq_rounded;
-      case 'text':
-        return Icons.description_outlined;
-      default:
-        return Icons.insert_drive_file_outlined;
+      case 'image':  return Icons.image_outlined;
+      case 'pdf':    return Icons.picture_as_pdf_outlined;
+      case 'audio':  return Icons.graphic_eq_rounded;
+      case 'text':   return Icons.description_outlined;
+      default:       return Icons.insert_drive_file_outlined;
     }
   }
 
-  Color _colorForType(String type) {
+  Color _colorForType(String type, bool isDark) {
     switch (type) {
-      case 'image':
-        return AppColors.primary;
-      case 'pdf':
-        return AppColors.error;
-      case 'audio':
-        return AppColors.warning;
-      case 'text':
-        return AppColors.info;
-      default:
-        return AppColors.secondary;
+      case 'image':  return isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
+      case 'pdf':    return const Color(0xFFFF3B30);
+      case 'audio':  return const Color(0xFFFF9500);
+      case 'text':   return isDark ? const Color(0xFF64D2FF) : const Color(0xFF5AC8FA);
+      default:       return isDark ? const Color(0xFF98989D) : const Color(0xFF8E8E93);
     }
   }
 }

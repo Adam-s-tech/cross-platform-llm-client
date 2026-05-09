@@ -14,580 +14,276 @@ class SettingsView extends GetView<SettingsController> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
+      backgroundColor: isDark ? Colors.black : const Color(0xFFF2F2F7),
       appBar: AppBar(
-        title: Text('Settings',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: isDark ? Colors.black : const Color(0xFFF2F2F7),
+        title: Text('Settings', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 34)),
+        toolbarHeight: 56,
       ),
       body: Obx(() => ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // ── Appearance ────────────────────────
-              _buildSectionHeader(context, 'APPEARANCE'),
-              _buildThemeCard(),
-              const SizedBox(height: 20),
-              _buildSectionHeader(context, 'DIAGNOSTICS'),
-              _buildDiagnosticsCard(context),
-              const SizedBox(height: 20),
-
-              // ── Device Info ───────────────────────
-              _buildSectionHeader(context, 'DEVICE'),
-              _buildDeviceInfoCard(context),
-              const SizedBox(height: 20),
-
-              // ── Inference Mode ──────────────────
-              _buildSectionHeader(context, 'INFERENCE MODE'),
-              _buildInferenceModeCard(context),
-              const SizedBox(height: 20),
-              _buildSectionHeader(context, 'GLOBAL SYSTEM PROMPT'),
-              _buildSystemPromptCard(context),
-              const SizedBox(height: 20),
-
-              // ── Cloud API Config ────────────────
-              // ── Model Parameters (RAM-aware) ─────
-              _buildSectionHeader(context, 'MODEL PARAMETERS'),
-              _buildLiteRtPerformanceCard(context),
-              _buildSmartSlider(
-                context: context,
-                label: 'Temperature',
-                value: controller.temperature.value,
-                min: 0.0,
-                max: 2.0,
-                divisions: 20,
-                safeMax: 1.0,
-                onChanged: (v) => controller.setTemperature(v),
-                warningMessage:
-                    'High temperature = unpredictable, rambling output!',
-                icon: Icons.thermostat,
-              ),
-              _buildSmartSlider(
-                context: context,
-                label: 'Max Tokens',
-                value: controller.maxTokens.value.toDouble(),
-                min: 64,
-                max: 4096,
-                divisions: 63,
-                safeMax: Get.find<DeviceInfoService>().maxSafeTokens.toDouble(),
-                onChanged: (v) => controller.setMaxTokens(v.toInt()),
-                displayValue: controller.maxTokens.value.toString(),
-                warningMessage:
-                    'Your phone only has ${Get.find<DeviceInfoService>().totalRamGB.value.toStringAsFixed(0)}GB RAM! This WILL crash! 💀',
-                icon: Icons.token,
-              ),
-              _buildSmartSlider(
-                context: context,
-                label: 'Context Size',
-                value: controller.contextSize.value.toDouble(),
-                min: 512,
-                max: 8192,
-                divisions: 15,
-                safeMax:
-                    Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
-                onChanged: (v) => controller.setContextSize(v.toInt()),
-                displayValue: controller.contextSize.value.toString(),
-                warningMessage:
-                    'Context this large will eat all your RAM! Your phone will FREEZE! 🥶',
-                icon: Icons.memory,
-              ),
-              _buildSmartSlider(
-                context: context,
-                label: 'Image Generation Steps',
-                value: controller.imageSteps.value.toDouble(),
-                min: 1,
-                max: 20,
-                divisions: 19,
-                safeMax: 8,
-                onChanged: (v) => controller.setImageSteps(v.toInt()),
-                displayValue: controller.imageSteps.value.toString(),
-                warningMessage:
-                    'More steps = better quality but MUCH slower on phone CPU! 1–4 steps recommended.',
-                icon: Icons.image,
-              ),
-              const SizedBox(height: 20),
-
-              // ── About ───────────────────────────
-              _buildSectionHeader(context, 'ABOUT'),
-              _buildAboutCard(context),
-              const SizedBox(height: 40),
-            ],
-          )),
-    );
-  }
-
-  Widget _buildThemeCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          children: [
-            for (final mode in [
-              ThemeMode.light,
-              ThemeMode.dark,
-              ThemeMode.system
-            ])
-              RadioListTile<ThemeMode>(
-                value: mode,
-                groupValue: controller.themeMode.value,
-                // onChanged: (v) => controller.setThemeMode(v!),
-                title: Text(
-                  _themeModeName(mode),
-                  style: GoogleFonts.inter(
-                      fontSize: 14, fontWeight: FontWeight.w500),
-                ),
-                secondary:
-                    Icon(_themeModeIcon(mode), color: AppColors.textMuted),
-                activeColor: AppColors.primary,
-                dense: true,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _themeModeName(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.light:
-        return 'Light';
-      case ThemeMode.dark:
-        return 'Dark';
-      case ThemeMode.system:
-        return 'System Default';
-    }
-  }
-
-  IconData _themeModeIcon(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.light:
-        return Icons.wb_sunny_outlined;
-      case ThemeMode.dark:
-        return Icons.dark_mode_outlined;
-      case ThemeMode.system:
-        return Icons.brightness_auto_outlined;
-    }
-  }
-
-  Widget _buildSectionHeader(BuildContext context, String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        title,
-        style: GoogleFonts.inter(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: Theme.of(context).hintColor,
-          letterSpacing: 1.2,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInferenceModeCard(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          children: [
-            RadioListTile<String>(
-              value: 'local',
-              groupValue: controller.inferenceMode.value,
-              onChanged: (v) => controller.setInferenceMode(v!),
-              title: Text('Local (On-Device)',
-                  style: GoogleFonts.inter(
-                      fontSize: 14, fontWeight: FontWeight.w500)),
-              subtitle: Obx(() {
-                final inference = Get.find<InferenceService>();
-                return Text(
-                  inference.isModelLoaded.value
-                      ? 'Active: ${inference.loadedModelName.value}'
-                      : 'No model loaded',
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: Theme.of(context).hintColor),
-                );
-              }),
-              activeColor: AppColors.primary,
-              dense: true,
-            ),
-            RadioListTile<String>(
-              value: 'cloud',
-              groupValue: controller.inferenceMode.value,
-              onChanged: (v) => controller.setInferenceMode(v!),
-              title: Text('Cloud API',
-                  style: GoogleFonts.inter(
-                      fontSize: 14, fontWeight: FontWeight.w500)),
-              subtitle: Text(
-                controller.cloudProvider.value.toUpperCase(),
-                style: GoogleFonts.inter(
-                    fontSize: 12, color: Theme.of(context).hintColor),
-              ),
-              activeColor: AppColors.secondary,
-              dense: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSystemPromptCard(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Applies to local and cloud models',
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                color: Theme.of(context).hintColor,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller.globalSystemPromptController,
-              minLines: 3,
-              maxLines: 6,
-              style: GoogleFonts.inter(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: AppConstants.systemPrompt,
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.save, size: 18),
-                  onPressed: () => controller.setGlobalSystemPrompt(
-                    controller.globalSystemPromptController.text,
-                  ),
-                ),
-              ),
-              onSubmitted: (value) => controller.setGlobalSystemPrompt(value),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLiteRtPerformanceCard(BuildContext context) {
-    final modes = [
-      (
-        value: 'auto_fast',
-        title: 'Auto Fast',
-        subtitle: 'Try GPU like Edge Gallery, then use CPU if GPU is unsafe.',
-        icon: Icons.auto_awesome,
-      ),
-      (
-        value: 'gpu_fast',
-        title: 'GPU Fast',
-        subtitle: 'Maximum LiteRT speed attempt. Can crash on some devices.',
-        icon: Icons.bolt,
-      ),
-      (
-        value: 'cpu_safe',
-        title: 'CPU Safe',
-        subtitle: 'Stable LiteRT mode with lower token speed.',
-        icon: Icons.shield_outlined,
-      ),
-    ];
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          children: [
-            for (final mode in modes)
-              ListTile(
-                onTap: () => controller.setLiteRtPerformanceMode(mode.value),
-                leading: Icon(mode.icon, color: AppColors.primary),
-                title: Text(
-                  mode.title,
-                  style: GoogleFonts.inter(
-                      fontSize: 14, fontWeight: FontWeight.w500),
-                ),
-                subtitle: Text(
-                  mode.subtitle,
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: Theme.of(context).hintColor),
-                ),
-                trailing: controller.liteRtPerformanceMode.value == mode.value
-                    ? const Icon(Icons.check, color: AppColors.primary)
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: [
+          const SizedBox(height: 8),
+          _sectionLabel(context, 'APPEARANCE'),
+          _appleGroupedCard(context, isDark, children: [
+            for (final mode in [ThemeMode.light, ThemeMode.dark, ThemeMode.system])
+              _appleListTile(
+                context, isDark,
+                leading: Icon(_themeModeIcon(mode), size: 20, color: Theme.of(context).hintColor),
+                title: _themeModeName(mode),
+                trailing: controller.themeMode.value == mode
+                    ? Icon(Icons.check, size: 18, color: isDark ? const Color(0xFF0A84FF) : AppColors.primary)
                     : null,
-                dense: true,
+                showDivider: mode != ThemeMode.system,
+                onTap: () => controller.setThemeMode(mode),
               ),
-          ],
-        ),
-      ),
+          ]),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'DIAGNOSTICS'),
+          _appleGroupedCard(context, isDark, children: [
+            _appleListTile(context, isDark,
+              leading: _iconBox(const Color(0xFF5AC8FA), Icons.article_outlined),
+              title: 'Logs',
+              subtitle: 'View errors, warnings, and debug details',
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              showDivider: false,
+              onTap: () => Get.to(() => const LogView()),
+            ),
+          ]),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'DEVICE'),
+          _buildDeviceCard(context, isDark),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'INFERENCE MODE'),
+          _appleGroupedCard(context, isDark, children: [
+            _appleListTile(context, isDark,
+              leading: _iconBox(AppColors.success, Icons.phone_iphone_rounded),
+              title: 'Local (On-Device)',
+              subtitle: _localSubtitle(),
+              trailing: controller.inferenceMode.value == 'local'
+                  ? Icon(Icons.check, size: 18, color: isDark ? const Color(0xFF0A84FF) : AppColors.primary)
+                  : null,
+              showDivider: true,
+              onTap: () => controller.setInferenceMode('local'),
+            ),
+            _appleListTile(context, isDark,
+              leading: _iconBox(AppColors.secondary, Icons.cloud_outlined),
+              title: 'Cloud API',
+              subtitle: controller.cloudProvider.value.toUpperCase(),
+              trailing: controller.inferenceMode.value == 'cloud'
+                  ? Icon(Icons.check, size: 18, color: isDark ? const Color(0xFF0A84FF) : AppColors.primary)
+                  : null,
+              showDivider: false,
+              onTap: () => controller.setInferenceMode('cloud'),
+            ),
+          ]),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'SYSTEM PROMPT'),
+          _appleGroupedCard(context, isDark, children: [
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Applies to local and cloud models', style: GoogleFonts.inter(fontSize: 13, color: Theme.of(context).hintColor)),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller.globalSystemPromptController,
+                  minLines: 3, maxLines: 6,
+                  style: GoogleFonts.inter(fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: AppConstants.systemPrompt,
+                    suffixIcon: IconButton(icon: const Icon(Icons.check_circle_outline, size: 20), onPressed: () => controller.setGlobalSystemPrompt(controller.globalSystemPromptController.text)),
+                  ),
+                  onSubmitted: (v) => controller.setGlobalSystemPrompt(v),
+                ),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'MODEL PARAMETERS'),
+          _buildLiteRtCard(context, isDark),
+          const SizedBox(height: 10),
+          _buildSlider(context, isDark, label: 'Temperature', value: controller.temperature.value, min: 0.0, max: 2.0, divisions: 20, safeMax: 1.0, onChanged: (v) => controller.setTemperature(v), icon: Icons.thermostat_rounded, warning: 'High temperature = unpredictable output!'),
+          const SizedBox(height: 10),
+          _buildSlider(context, isDark, label: 'Max Tokens', value: controller.maxTokens.value.toDouble(), min: 64, max: 4096, divisions: 63, safeMax: Get.find<DeviceInfoService>().maxSafeTokens.toDouble(), onChanged: (v) => controller.setMaxTokens(v.toInt()), displayValue: controller.maxTokens.value.toString(), icon: Icons.tag_rounded, warning: 'Your phone may crash with this value!'),
+          const SizedBox(height: 10),
+          _buildSlider(context, isDark, label: 'Context Size', value: controller.contextSize.value.toDouble(), min: 512, max: 8192, divisions: 15, safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(), onChanged: (v) => controller.setContextSize(v.toInt()), displayValue: controller.contextSize.value.toString(), icon: Icons.memory_rounded, warning: 'Context this large will eat all your RAM!'),
+          const SizedBox(height: 10),
+          _buildSlider(context, isDark, label: 'Image Gen Steps', value: controller.imageSteps.value.toDouble(), min: 1, max: 20, divisions: 19, safeMax: 8, onChanged: (v) => controller.setImageSteps(v.toInt()), displayValue: controller.imageSteps.value.toString(), icon: Icons.image_rounded, warning: 'More steps = better quality but MUCH slower!'),
+          const SizedBox(height: 24),
+
+          _sectionLabel(context, 'ABOUT'),
+          _appleGroupedCard(context, isDark, children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(children: [
+                Container(width: 44, height: 44, decoration: BoxDecoration(gradient: LinearGradient(colors: [isDark ? const Color(0xFF0A84FF) : AppColors.primary, AppColors.secondary]), borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 22)),
+                const SizedBox(width: 14),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('AI Chat', style: GoogleFonts.inter(fontSize: 17, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('v1.0.0 · by orailnoor', style: GoogleFonts.inter(fontSize: 13, color: Theme.of(context).hintColor)),
+                ]),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 40),
+        ],
+      )),
     );
   }
 
-  Widget _buildDeviceInfoCard(BuildContext context) {
+  // ── Apple grouped card container ──
+  Widget _appleGroupedCard(BuildContext context, bool isDark, {required List<Widget> children}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(mainAxisSize: MainAxisSize.min, children: children),
+    );
+  }
+
+  // ── Apple-style list tile ──
+  Widget _appleListTile(BuildContext context, bool isDark, {
+    Widget? leading, required String title, String? subtitle,
+    Widget? trailing, bool showDivider = true, VoidCallback? onTap,
+  }) {
+    return Column(children: [
+      InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(children: [
+            if (leading != null) ...[leading, const SizedBox(width: 14)],
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(title, style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400, color: isDark ? Colors.white : Colors.black)),
+              if (subtitle != null) ...[const SizedBox(height: 2), Text(subtitle, style: GoogleFonts.inter(fontSize: 13, color: Theme.of(context).hintColor))],
+            ])),
+            if (trailing != null) trailing,
+          ]),
+        ),
+      ),
+      if (showDivider) Divider(height: 0.5, indent: leading != null ? 58 : 16, color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06)),
+    ]);
+  }
+
+  Widget _iconBox(Color color, IconData icon) {
+    return Container(width: 30, height: 30, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(7)),
+      child: Icon(icon, size: 17, color: Colors.white));
+  }
+
+  Widget _sectionLabel(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, bottom: 6),
+      child: Text(title, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: Theme.of(context).hintColor)),
+    );
+  }
+
+  String _localSubtitle() {
+    final inf = Get.find<InferenceService>();
+    return inf.isModelLoaded.value ? 'Active: ${inf.loadedModelName.value}' : 'No model loaded';
+  }
+
+  Widget _buildDeviceCard(BuildContext context, bool isDark) {
     return Obx(() {
       final device = Get.find<DeviceInfoService>();
-      final Color tierColor;
-      final IconData tierIcon;
+      Color tierColor;
+      IconData tierIcon;
       switch (device.deviceTier.value) {
-        case 'low':
-          tierColor = AppColors.error;
-          tierIcon = Icons.battery_alert;
-          break;
-        case 'mid':
-          tierColor = AppColors.warning;
-          tierIcon = Icons.phone_android;
-          break;
-        case 'high':
-          tierColor = AppColors.success;
-          tierIcon = Icons.smartphone;
-          break;
-        case 'ultra':
-          tierColor = AppColors.primary;
-          tierIcon = Icons.rocket_launch;
-          break;
-        default:
-          tierColor = Theme.of(context).hintColor;
-          tierIcon = Icons.phone_android;
+        case 'low': tierColor = AppColors.error; tierIcon = Icons.battery_alert; break;
+        case 'mid': tierColor = AppColors.warning; tierIcon = Icons.phone_android; break;
+        case 'high': tierColor = AppColors.success; tierIcon = Icons.smartphone; break;
+        case 'ultra': tierColor = AppColors.primary; tierIcon = Icons.rocket_launch; break;
+        default: tierColor = Theme.of(context).hintColor; tierIcon = Icons.phone_android;
       }
-
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: tierColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(tierIcon, color: tierColor, size: 22),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      device.tierDescription,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Available: ${device.availableRamGB.value.toStringAsFixed(1)}GB · '
-                      'Context: ${device.recommendedContextSize} · '
-                      'Tokens: ${device.recommendedMaxTokens}',
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: Theme.of(context).hintColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _appleGroupedCard(context, isDark, children: [
+        Padding(padding: const EdgeInsets.all(16), child: Row(children: [
+          _iconBox(tierColor, tierIcon),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(device.tierDescription, style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 2),
+            Text('Available: ${device.availableRamGB.value.toStringAsFixed(1)}GB · Context: ${device.recommendedContextSize} · Tokens: ${device.recommendedMaxTokens}',
+              style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor)),
+          ])),
+        ])),
+      ]);
     });
   }
 
-  Widget _buildDiagnosticsCard(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: AppColors.info.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(Icons.article_outlined,
-              color: AppColors.info, size: 22),
+  Widget _buildLiteRtCard(BuildContext context, bool isDark) {
+    final modes = [
+      (value: 'auto_fast', title: 'Auto Fast', subtitle: 'Try GPU first, then CPU fallback', icon: Icons.auto_awesome_rounded),
+      (value: 'gpu_fast', title: 'GPU Fast', subtitle: 'Maximum speed, may crash on some devices', icon: Icons.bolt_rounded),
+      (value: 'cpu_safe', title: 'CPU Safe', subtitle: 'Stable mode with lower speed', icon: Icons.shield_outlined),
+    ];
+    return _appleGroupedCard(context, isDark, children: [
+      for (var i = 0; i < modes.length; i++)
+        _appleListTile(context, isDark,
+          leading: _iconBox(isDark ? const Color(0xFF0A84FF) : AppColors.primary, modes[i].icon),
+          title: modes[i].title,
+          subtitle: modes[i].subtitle,
+          trailing: controller.liteRtPerformanceMode.value == modes[i].value
+              ? Icon(Icons.check, size: 18, color: isDark ? const Color(0xFF0A84FF) : AppColors.primary)
+              : null,
+          showDivider: i < modes.length - 1,
+          onTap: () => controller.setLiteRtPerformanceMode(modes[i].value),
         ),
-        title: Text(
-          'Logs',
-          style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          'View errors, warnings, and share debug details.',
-          style: GoogleFonts.inter(
-              fontSize: 12, color: Theme.of(context).hintColor),
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Get.to(() => const LogView()),
-      ),
-    );
+    ]);
   }
 
-  Widget _buildSmartSlider({
-    required BuildContext context,
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required double safeMax,
-    required ValueChanged<double> onChanged,
-    required String warningMessage,
-    required IconData icon,
-    String? displayValue,
+  Widget _buildSlider(BuildContext context, bool isDark, {
+    required String label, required double value, required double min, required double max,
+    required int divisions, required double safeMax, required ValueChanged<double> onChanged,
+    required IconData icon, required String warning, String? displayValue,
   }) {
-    final isOverLimit = value > safeMax;
-    final dangerLevel = safeMax < max
-        ? ((value - safeMax) / (max - safeMax)).clamp(0.0, 1.0)
-        : 0.0;
-    final sliderColor = isOverLimit
-        ? Color.lerp(AppColors.warning, AppColors.error, dangerLevel)!
-        : AppColors.primary;
+    final isOver = value > safeMax;
+    final danger = safeMax < max ? ((value - safeMax) / (max - safeMax)).clamp(0.0, 1.0) : 0.0;
+    final accent = isOver ? Color.lerp(AppColors.warning, AppColors.error, danger)! : (isDark ? const Color(0xFF0A84FF) : AppColors.primary);
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: isOverLimit
-            ? BorderSide(
-                color: sliderColor.withOpacity(0.5),
-                width: 1.5,
-              )
-            : BorderSide.none,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 16, color: sliderColor),
-                const SizedBox(width: 8),
-                Text(label,
-                    style: GoogleFonts.inter(
-                        fontSize: 13, fontWeight: FontWeight.w500)),
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: sliderColor.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    displayValue ?? value.toStringAsFixed(2),
-                    style: GoogleFonts.firaCode(
-                      fontSize: 13,
-                      color: sliderColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            // Safe limit indicator
-            if (safeMax < max)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Recommended max: ${safeMax.toInt() > 0 ? safeMax.toInt().toString() : safeMax.toStringAsFixed(1)}',
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    color: Theme.of(context).hintColor,
-                  ),
-                ),
-              ),
-            Slider(
-              value: value.clamp(min, max),
-              min: min,
-              max: max,
-              divisions: divisions,
-              onChanged: (v) {
-                // VIBRATE when crossing into danger zone!
-                if (v > safeMax && value <= safeMax) {
-                  // Entering danger zone — heavy vibration
-                  HapticFeedback.heavyImpact();
-                  Future.delayed(const Duration(milliseconds: 100),
-                      () => HapticFeedback.heavyImpact());
-                  Future.delayed(const Duration(milliseconds: 200),
-                      () => HapticFeedback.heavyImpact());
-                  Get.snackbar(
-                    '⚠️ DANGER ZONE',
-                    warningMessage,
-                    snackPosition: SnackPosition.BOTTOM,
-                    backgroundColor: AppColors.error.withOpacity(0.9),
-                    colorText: Colors.white,
-                    icon: const Icon(Icons.warning_amber_rounded,
-                        color: Colors.white, size: 28),
-                    duration: const Duration(seconds: 4),
-                    margin: const EdgeInsets.all(12),
-                    borderRadius: 12,
-                  );
-                } else if (v > safeMax) {
-                  // Already in danger zone — light vibration on each tick
-                  HapticFeedback.mediumImpact();
-                }
-                onChanged(v);
-              },
-              activeColor: sliderColor,
-              inactiveColor:
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            // Danger warning banner
-            if (isOverLimit)
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: sliderColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: sliderColor.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded,
-                        color: sliderColor, size: 14),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        warningMessage,
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          color: sliderColor,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
+    return _appleGroupedCard(context, isDark, children: [
+      Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 16, color: accent),
+          const SizedBox(width: 8),
+          Text(label, style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(color: accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+            child: Text(displayValue ?? value.toStringAsFixed(2), style: GoogleFonts.inter(fontSize: 13, color: accent, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+        if (safeMax < max) Padding(padding: const EdgeInsets.only(top: 4),
+          child: Text('Recommended max: ${safeMax.toInt() > 0 ? safeMax.toInt().toString() : safeMax.toStringAsFixed(1)}', style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor))),
+        Slider(value: value.clamp(min, max), min: min, max: max, divisions: divisions, activeColor: accent,
+          onChanged: (v) {
+            if (v > safeMax && value <= safeMax) {
+              HapticFeedback.heavyImpact();
+              Get.snackbar('⚠️ Warning', warning, snackPosition: SnackPosition.BOTTOM, backgroundColor: AppColors.error.withValues(alpha: 0.9), colorText: Colors.white, duration: const Duration(seconds: 3), margin: const EdgeInsets.all(12));
+            } else if (v > safeMax) { HapticFeedback.mediumImpact(); }
+            onChanged(v);
+          }),
+        if (isOver) Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(color: accent.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
+          child: Row(children: [
+            Icon(Icons.warning_amber_rounded, size: 14, color: accent),
+            const SizedBox(width: 6),
+            Expanded(child: Text(warning, style: GoogleFonts.inter(fontSize: 12, color: accent, fontWeight: FontWeight.w400))),
+          ])),
+      ])),
+    ]);
   }
 
-  Widget _buildAboutCard(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'AI Chat',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Intelligent AI Assistant\nv1.0.0 · by orailnoor',
-              style: GoogleFonts.inter(
-                  fontSize: 12, color: Theme.of(context).hintColor),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  String _themeModeName(ThemeMode m) => m == ThemeMode.light ? 'Light' : m == ThemeMode.dark ? 'Dark' : 'System Default';
+  IconData _themeModeIcon(ThemeMode m) => m == ThemeMode.light ? Icons.wb_sunny_outlined : m == ThemeMode.dark ? Icons.dark_mode_outlined : Icons.brightness_auto_outlined;
 }

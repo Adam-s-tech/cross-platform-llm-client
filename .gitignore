@@ -80,3 +80,9 @@ secrets/
 
 # Firebase hosting cache
 .firebase/
+
+# Local plugin build artifacts / downloaded dependencies
+local_plugins/**/android/src/main/cpp/vulkan-headers/
+local_plugins/**/ios/sd_cpp_src/
+local_plugins/**/android/.cxx/
+local_plugins/**/android/build/

@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <android/log.h>
+#include <vulkan/vulkan.h>
 #include "stable-diffusion.h"
 
 #define TAG "SD_JNI"
@@ -11,6 +12,21 @@
 static sd_ctx_t* g_sd_ctx = nullptr;
 static JavaVM* g_jvm = nullptr;
 static jobject g_progress_callback = nullptr;
+
+static bool check_vulkan_1_2() {
+    uint32_t api_version = 0;
+    VkResult result = vkEnumerateInstanceVersion(&api_version);
+    if (result != VK_SUCCESS) {
+        LOGE("vkEnumerateInstanceVersion failed: %d", result);
+        return false;
+    }
+    LOGI("Vulkan API version: 0x%x", api_version);
+    if (api_version < VK_API_VERSION_1_2) {
+        LOGE("Vulkan 1.2 required for SD, got 0x%x", api_version);
+        return false;
+    }
+    return true;
+}
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
@@ -64,6 +80,12 @@ Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_initModel(
     params.model_path = path;
     params.n_threads = sd_get_num_physical_cores();
     
+    if (!check_vulkan_1_2()) {
+        LOGE("Device does not support Vulkan 1.2 — cannot initialize SD model");
+        env->ReleaseStringUTFChars(model_path, path);
+        return JNI_FALSE;
+    }
+
     LOGI("Initializing SD model from: %s", path);
     g_sd_ctx = new_sd_ctx(&params);
     

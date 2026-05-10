@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
+import 'package:llama_flutter_android/llama_flutter_android.dart';
 import 'package:sd_flutter_android/sd_flutter_android.dart';
 import '../core/constants.dart';
 import 'hive_service.dart';
@@ -25,6 +26,19 @@ class LocalImageService extends GetxService {
 
       isLoadingModel.value = true;
       progress.value = 0.0;
+
+      // ── Vulkan 1.2 safety gate ──
+      try {
+        final gpu = await LlamaController().detectGpu();
+        if (!gpu.vulkanSupported || gpu.vulkanApiVersion < 0x00402000) {
+          isLoadingModel.value = false;
+          final versionHex = '0x${gpu.vulkanApiVersion.toRadixString(16)}';
+          return 'ERROR: Local image generation requires Vulkan 1.2. '
+              'This device reports Vulkan $versionHex — image models are not supported.';
+        }
+      } catch (e) {
+        // If GPU detection itself fails, proceed and let native layer handle it
+      }
 
       final success = await SdFlutterAndroid.initModel(modelPath);
 

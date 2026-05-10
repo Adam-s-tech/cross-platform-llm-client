@@ -167,6 +167,15 @@ class AppConstants {
       'template': 'phi',
     },
     {
+      'name': 'Gemma 2 2B Instruct (Q4_K_M)',
+      'filename': 'gemma-2-2b-it-q4_k_m.gguf',
+      'url':
+          'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
+      'size': '1.71 GB',
+      'description': 'Google\'s lightweight general chat model — fast and smart',
+      'template': 'gemma',
+    },
+    {
       'name': 'Gemma-2-2B-Abliterated (Q4_K_M)',
       'filename': 'gemma-2-2b-it-abliterated-q4_k_m.gguf',
       'url':

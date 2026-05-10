@@ -54,7 +54,7 @@ void main() async {
   // Keep last model as a quick-load option, but do not auto-load on startup.
   _validateLastModel();
 
-  runApp(const AIChatApp());
+  runApp(const PrivateLMApp());
 
   // Apply system UI after frame is rendered so Get.mediaQuery is available
   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -109,14 +109,14 @@ void _autoConfigureForDevice() {
       'maxTokens=${device.recommendedMaxTokens} for ${device.totalRamGB.value.toStringAsFixed(1)}GB RAM');
 }
 
-class AIChatApp extends StatelessWidget {
-  const AIChatApp({super.key});
+class PrivateLMApp extends StatelessWidget {
+  const PrivateLMApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     final settings = Get.find<SettingsController>();
     return Obx(() => GetMaterialApp(
-          title: 'AI Chat',
+          title: 'PrivateLM',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

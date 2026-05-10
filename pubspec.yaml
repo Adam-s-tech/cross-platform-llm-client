@@ -1,4 +1,4 @@
-name: ai_chat
+name: privatelm
 description: AI Chat — Local/Cloud LLM Assistant
 publish_to: 'none'
 version: 1.0.0+1

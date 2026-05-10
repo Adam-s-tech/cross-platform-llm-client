@@ -1,6 +1,6 @@
 {
-    "name": "ai_chat",
-    "short_name": "ai_chat",
+    "name": "PrivateLM",
+    "short_name": "PrivateLM",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

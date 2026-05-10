@@ -1,4 +1,4 @@
-package com.aichat.ai_chat
+package com.orailnoor.privatelm
 
 import android.content.BroadcastReceiver
 import android.content.Context

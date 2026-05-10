@@ -1,4 +1,4 @@
-# cross-platform-llm-client
+# PrivateLM
 
 [![Live Web App](https://img.shields.io/badge/Live_Demo-Try_Web_App-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://ai-chat-orailnoor.web.app/)
 

@@ -1,4 +1,4 @@
-package com.aichat.ai_chat
+package com.orailnoor.privatelm
 
 import android.app.AlertDialog
 import android.app.AlarmManager

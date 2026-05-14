@@ -1,10 +1,10 @@
 name: privatelm
 description: AI Chat — Local/Cloud LLM Assistant
-publish_to: 'none'
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -21,8 +21,6 @@ dependencies:
   llama_flutter_android: ^0.2.0
   sd_flutter_android:
     path: local_plugins/sd_flutter_android
-
-
 
   # Networking
   dio: ^5.7.0
@@ -73,4 +71,4 @@ flutter:
   assets:
     - assets/
     - assets/webgpu_engine.html
-
+    - assets/icons/

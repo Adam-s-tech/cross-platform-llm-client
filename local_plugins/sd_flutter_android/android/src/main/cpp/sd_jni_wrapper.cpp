@@ -11,6 +11,7 @@
 static sd_ctx_t* g_sd_ctx = nullptr;
 static JavaVM* g_jvm = nullptr;
 static jobject g_progress_callback = nullptr;
+static std::string g_model_path;
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
@@ -137,8 +138,23 @@ Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_generateImage(
     params.height = 512;
     params.sample_params.sample_method = EULER_A_SAMPLE_METHOD;
 
+    // Distilled models (SDXS, LCM, etc.) break with standard CFG=7.0
+    if (g_model_path.find("distilled") != std::string::npos ||
+        g_model_path.find("sdxs") != std::string::npos ||
+        g_model_path.find("lcm") != std::string::npos) {
+        params.sample_params.guidance.txt_cfg = 1.0f;
+        LOGI("Distilled model detected — using CFG=1.0");
+    }
+
     LOGI("Generating image for prompt: %s", p_str);
     sd_image_t* result = generate_image(g_sd_ctx, &params);
+
+    if (result) {
+        LOGI("Image generated: %dx%d channels=%d", result->width, result->height, result->channel);
+        if (result->channel >= 3 && result->data) {
+            LOGI("First pixel RGB: %d %d %d", result->data[0], result->data[1], result->data[2]);
+        }
+    }
 
     env->ReleaseStringUTFChars(prompt, p_str);
 

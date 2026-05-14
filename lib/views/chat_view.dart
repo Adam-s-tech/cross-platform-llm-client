@@ -118,7 +118,7 @@ class ChatView extends GetView<ChatController> {
             model = '${settings.customCloudName.value}: $model';
         }
         final title = sid.isEmpty
-            ? 'AI Chat'
+            ? 'PrivateLM'
             : controller.sessions.firstWhereOrNull((s) => s.id == sid)?.title ??
                 'Chat';
         return Padding(
@@ -279,18 +279,10 @@ class ChatView extends GetView<ChatController> {
         child: SingleChildScrollView(
       padding: const EdgeInsets.all(32),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 64,
-          height: 64,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [
-              _appleBlue(context),
-              _appleBlue(context).withValues(alpha: 0.6)
-            ], begin: Alignment.topLeft, end: Alignment.bottomRight),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: const Icon(Icons.auto_awesome_rounded,
-              size: 30, color: Colors.white),
+        Image.asset(
+          'assets/icons/appicon.png',
+          width: 120,
+          height: 120,
         ),
         const SizedBox(height: 20),
         Text('Hello.',

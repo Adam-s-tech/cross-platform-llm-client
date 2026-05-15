@@ -38,6 +38,9 @@ class HomeView extends GetView<HomeController> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.checkResumeModel(context);
+    });
     return Scaffold(
       backgroundColor: isDark ? Colors.black : Colors.white,
       body: Obx(() {

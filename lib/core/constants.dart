@@ -39,6 +39,8 @@ class AppConstants {
       'litert_gpu_warning_accepted';
   static const String keyLiteRtGpuLoadPending = 'litert_gpu_load_pending';
   static const String keyLiteRtGpuCrashDetected = 'litert_gpu_crash_detected';
+  static const String keyImageModelPath = 'image_model_path';
+  static const String keyImageModelName = 'image_model_name';
   static const String keyTemperature = 'temperature';
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';

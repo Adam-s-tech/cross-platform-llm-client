@@ -6,6 +6,7 @@ import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
 import '../core/constants.dart';
 import '../services/inference_service.dart';
+import '../services/local_image_service.dart';
 import '../services/device_info_service.dart';
 import 'log_view.dart';
 
@@ -318,9 +319,13 @@ class SettingsView extends GetView<SettingsController> {
 
   String _localSubtitle() {
     final inf = Get.find<InferenceService>();
-    return inf.isModelLoaded.value
-        ? 'Active: ${inf.loadedModelName.value}'
-        : 'No model loaded';
+    final localImage = Get.find<LocalImageService>();
+    if (inf.isModelLoaded.value) {
+      return 'Active: ${inf.loadedModelName.value}';
+    } else if (localImage.isModelLoaded.value) {
+      return 'Active: ${localImage.loadedModelName.value}';
+    }
+    return 'No model loaded';
   }
 
   Widget _buildDeviceCard(BuildContext context, bool isDark) {

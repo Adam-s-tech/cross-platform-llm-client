@@ -8,6 +8,7 @@ import '../controllers/settings_controller.dart';
 import '../controllers/model_controller.dart';
 import '../controllers/home_controller.dart';
 import '../services/inference_service.dart';
+import '../services/local_image_service.dart';
 import '../utils/thought_parser.dart';
 import '../widgets/attachment_preview.dart';
 import '../widgets/chat_bubble.dart';
@@ -91,11 +92,18 @@ class ChatView extends GetView<ChatController> {
         final isLocal = settings.inferenceMode.value == 'local';
         String model;
         if (isLocal) {
-          model = inf.isModelLoaded.value
-              ? inf.loadedModelName.value
-                  .replaceAll('.gguf', '')
-                  .replaceAll('.GGUF', '')
-              : 'No model loaded';
+          final localImage = Get.find<LocalImageService>();
+          if (inf.isModelLoaded.value) {
+            model = inf.loadedModelName.value
+                .replaceAll('.gguf', '')
+                .replaceAll('.GGUF', '');
+          } else if (localImage.isModelLoaded.value) {
+            model = localImage.loadedModelName.value
+                .replaceAll('.gguf', '')
+                .replaceAll('.GGUF', '');
+          } else {
+            model = 'No model loaded';
+          }
           if (model.length > 24) model = '${model.substring(0, 24)}…';
         } else {
           final p = settings.cloudProvider.value;

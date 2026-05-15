@@ -90,9 +90,12 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 
 | Platform | Local Inference | Cloud APIs | Notes |
 |----------|----------------|------------|-------|
-| Android  | ✅ Yes         | ✅ Yes     | GPU offload via Vulkan; minSdk 26 |
+| Android  | ✅ Yes         | ✅ Yes     | CPU offload via NEON; minSdk 28 |
 | iOS      | ✅ Yes         | ✅ Yes     | Metal GPU acceleration |
 | Web      | ❌ No          | ✅ Yes     | Cloud-only (local coming soon) |
+
+### iOS / iPad
+The iPad release is distributed as a standalone ZIP package for sideloading. Download the latest `PrivateLM-iOS.zip` from the [Releases](https://github.com/orailnoor/ai_chat/releases) page, extract it, and install the `.ipa` via AltStore, Sideloadly, or Xcode. iPhone support is experimental — iPad is the recommended iOS target due to RAM requirements for local models.
 
 ---
 

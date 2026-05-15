@@ -10,12 +10,17 @@ import 'hive_service.dart';
 
 class LocalImageService extends GetxService {
   final HiveService _hive = Get.find<HiveService>();
-  
+
   final isModelLoaded = false.obs;
   final isLoadingModel = false.obs;
   final isGenerating = false.obs;
   final progress = 0.0.obs;
   final loadedModelName = ''.obs;
+
+  String? get lastModelPath =>
+      _hive.getSetting<String>(AppConstants.keyImageModelPath);
+  String? get lastModelName =>
+      _hive.getSetting<String>(AppConstants.keyImageModelName);
 
   Future<String> loadModel(String modelPath, {String? modelName}) async {
     if (isLoadingModel.value) return 'ERROR: Model is already loading.';
@@ -53,6 +58,8 @@ class LocalImageService extends GetxService {
         isModelLoaded.value = true;
         isLoadingModel.value = false;
         loadedModelName.value = modelName ?? modelPath.split('/').last;
+        await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
+        await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
         return 'SUCCESS: Native Image Engine loaded.';
       } else {
         isModelLoaded.value = false;
@@ -71,6 +78,8 @@ class LocalImageService extends GetxService {
     await SdFlutterAndroid.unloadModel();
     isModelLoaded.value = false;
     loadedModelName.value = '';
+    await _hive.setSetting(AppConstants.keyImageModelPath, '');
+    await _hive.setSetting(AppConstants.keyImageModelName, '');
   }
 
   Future<Uint8List?> generateImage({

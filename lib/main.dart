@@ -62,35 +62,35 @@ void main() async {
   });
 }
 
-/// If a remembered model is missing, clear it so the quick-load option is honest.
-/// If it is present, start loading it in the background if in local mode.
+/// Validates that remembered models still exist on disk.
+/// Does NOT auto-load — the HomeView will ask the user on first launch.
 void _validateLastModel() async {
-  final inference = Get.find<InferenceService>();
-  if (!inference.supportsLocalInference) return;
-
   final hive = Get.find<HiveService>();
-  final settings = Get.find<SettingsController>();
-  final modelName = hive.getSetting<String>(AppConstants.keyLocalModelName);
-  final modelPath = hive.getSetting<String>(AppConstants.keyLocalModelPath);
-  final modelRuntime =
-      hive.getSetting<String>(AppConstants.keyLocalModelRuntime);
+  final downloadService = Get.find<DownloadService>();
 
-  if (modelName != null &&
-      modelName.isNotEmpty &&
-      modelPath != null &&
-      modelPath.isNotEmpty) {
-    final downloadService = Get.find<DownloadService>();
-    if (!await downloadService.isModelDownloaded(modelName)) {
-      // Model file is missing, clear the active model settings
+  // Validate last text/LLM model
+  final textModelName = hive.getSetting<String>(AppConstants.keyLocalModelName);
+  final textModelPath = hive.getSetting<String>(AppConstants.keyLocalModelPath);
+  if (textModelName != null &&
+      textModelName.isNotEmpty &&
+      textModelPath != null &&
+      textModelPath.isNotEmpty) {
+    if (!await downloadService.isModelDownloaded(textModelName)) {
       await hive.setSetting(AppConstants.keyLocalModelPath, '');
       await hive.setSetting(AppConstants.keyLocalModelName, '');
-    } else {
-      // Model exists, let's autoload it if inference mode is local
-      if (settings.inferenceMode.value == 'local') {
-        // Start loading without awaiting
-        inference.loadModel(modelPath,
-            modelName: modelName, modelRuntime: modelRuntime);
-      }
+    }
+  }
+
+  // Validate last image model
+  final imageModelName = hive.getSetting<String>(AppConstants.keyImageModelName);
+  final imageModelPath = hive.getSetting<String>(AppConstants.keyImageModelPath);
+  if (imageModelName != null &&
+      imageModelName.isNotEmpty &&
+      imageModelPath != null &&
+      imageModelPath.isNotEmpty) {
+    if (!await downloadService.isModelDownloaded(imageModelName)) {
+      await hive.setSetting(AppConstants.keyImageModelPath, '');
+      await hive.setSetting(AppConstants.keyImageModelName, '');
     }
   }
 }

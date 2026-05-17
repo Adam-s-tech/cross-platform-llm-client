@@ -197,6 +197,25 @@ class SettingsView extends GetView<SettingsController> {
                   displayValue: controller.imageSteps.value.toString(),
                   icon: Icons.image_rounded,
                   warning: 'More steps = better quality but MUCH slower!'),
+              const SizedBox(height: 10),
+              _appleGroupedCard(context, isDark, children: [
+                Obx(() => _appleListTile(
+                      context,
+                      isDark,
+                      leading: _iconBox(
+                          isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+                          Icons.memory_rounded),
+                      title: 'Force CPU for Image Generation',
+                      subtitle: 'Automatically disabled for Adreno GPUs to prevent crashes',
+                      trailing: Switch(
+                        value: controller.imageGenForceCpu.value,
+                        onChanged: (v) => controller.setImageGenForceCpu(v),
+                        activeColor:
+                            isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+                      ),
+                      showDivider: false,
+                    )),
+              ]),
               const SizedBox(height: 24),
               _sectionLabel(context, 'ABOUT'),
               _appleGroupedCard(context, isDark, children: [

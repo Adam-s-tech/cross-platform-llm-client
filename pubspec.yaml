@@ -22,6 +22,9 @@ dependencies:
   sd_flutter_android:
     path: local_plugins/sd_flutter_android
 
+  # FFI for native library interop
+  ffi: ^2.1.2
+
   # Networking
   dio: ^5.7.0
   http: ^1.2.0

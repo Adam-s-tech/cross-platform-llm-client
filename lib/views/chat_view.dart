@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -63,7 +64,7 @@ class ChatView extends GetView<ChatController> {
                 itemCount: n + (streaming ? 1 : 0),
                 itemBuilder: (_, i) {
                   if (i == n && streaming)
-                    return _streamBubble(context, text, isDark);
+                    return Obx(() => _streamBubble(context, text, isDark));
                   return ChatBubble(message: controller.messages[i]);
                 },
               ),
@@ -99,9 +100,10 @@ class ChatView extends GetView<ChatController> {
                 .replaceAll('.gguf', '')
                 .replaceAll('.GGUF', '');
           } else if (localImage.isModelLoaded.value) {
-            model = localImage.loadedModelName.value
+            final backend = localImage.isUsingGpu.value ? '⚡' : '🖥';
+            model = '$backend ${localImage.loadedModelName.value
                 .replaceAll('.gguf', '')
-                .replaceAll('.GGUF', '');
+                .replaceAll('.GGUF', '')}';
           } else {
             model = 'No model loaded';
           }
@@ -1049,6 +1051,8 @@ class _ImageGenIndicator extends StatefulWidget {
 class _ImageGenIndicatorState extends State<_ImageGenIndicator>
     with SingleTickerProviderStateMixin {
   late AnimationController _c;
+  late Timer _timer;
+  int _elapsedSeconds = 0;
 
   @override
   void initState() {
@@ -1057,10 +1061,19 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     )..repeat();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final start = widget.controller.imageGenStartTime.value;
+      if (start != null) {
+        setState(() {
+          _elapsedSeconds = DateTime.now().difference(start).inSeconds;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
+    _timer.cancel();
     _c.dispose();
     super.dispose();
   }
@@ -1071,6 +1084,13 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
     final m = seconds ~/ 60;
     final s = seconds % 60;
     return s > 0 ? '~$m m $s s remaining' : '~$m m remaining';
+  }
+
+  String _fmtElapsed(int seconds) {
+    if (seconds < 60) return '${seconds}s';
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return s > 0 ? '${m}m ${s}s' : '${m}m';
   }
 
   @override
@@ -1106,7 +1126,7 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
           final step = widget.controller.imageGenStep.value;
           final total = widget.controller.imageGenTotal.value;
           final eta = widget.controller.imageGenEstimatedSecs.value;
-          final hasProgress = total > 0 && step > 0;
+          final hasProgress = total > 0;
           final pct = hasProgress ? (step / total).clamp(0.0, 1.0) : 0.0;
 
           return Column(
@@ -1155,6 +1175,15 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+                // Elapsed time
+                const SizedBox(height: 3),
+                Text(
+                  'Elapsed: ${_fmtElapsed(_elapsedSeconds)}',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: Theme.of(context).hintColor.withValues(alpha: 0.45),
+                  ),
+                ),
                 // ETA (only if we have a real estimate)
                 if (eta > 0 && step >= 2) ...[
                   const SizedBox(height: 3),
@@ -1166,6 +1195,34 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
                     ),
                   ),
                 ],
+                const SizedBox(height: 10),
+                // Cancel button
+                GestureDetector(
+                  onTap: widget.controller.stopGenerating,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF3B30).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.stop_rounded,
+                            size: 12, color: const Color(0xFFFF3B30)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Cancel',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: const Color(0xFFFF3B30),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ],
           );

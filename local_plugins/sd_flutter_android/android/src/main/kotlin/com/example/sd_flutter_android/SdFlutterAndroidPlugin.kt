@@ -23,7 +23,8 @@ class SdFlutterAndroidPlugin: FlutterPlugin, MethodCallHandler {
   }
 
   // Native methods (linked to sd_jni_wrapper.cpp)
-  private external fun initModel(path: String): Boolean
+  private external fun detectGpuVendor(): String
+  private external fun initModel(path: String, useGpu: Boolean): Boolean
   private external fun generateImage(prompt: String, steps: Int, callback: ProgressCallback): ByteArray?
   private external fun unloadModel()
 
@@ -41,12 +42,23 @@ class SdFlutterAndroidPlugin: FlutterPlugin, MethodCallHandler {
       "getPlatformVersion" -> {
         result.success("Android ${android.os.Build.VERSION.RELEASE}")
       }
+      "detectGpuVendor" -> {
+        scope.launch {
+          try {
+            val vendor = detectGpuVendor()
+            withContext(Dispatchers.Main) { result.success(vendor) }
+          } catch (e: Exception) {
+            withContext(Dispatchers.Main) { result.error("DETECT_FAILED", e.message, null) }
+          }
+        }
+      }
       "initModel" -> {
         val path = call.argument<String>("path")
+        val useGpu = call.argument<Boolean>("useGpu") ?: true
         if (path != null) {
           scope.launch {
             try {
-              val success = initModel(path)
+              val success = initModel(path, useGpu)
               withContext(Dispatchers.Main) { result.success(success) }
             } catch (e: Exception) {
               withContext(Dispatchers.Main) { result.error("INIT_FAILED", e.message, null) }

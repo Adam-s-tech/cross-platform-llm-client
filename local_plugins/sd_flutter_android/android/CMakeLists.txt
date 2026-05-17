@@ -9,13 +9,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 
-# Vulkan is disabled on Android because Adreno drivers crash with ggml compute shaders.
-# CPU (ARM64 NEON) is slower but stable.
+# Vulkan is enabled on Android with runtime Adreno detection and CPU fallback.
+# Adreno GPUs are blacklisted due to known GGML shader compiler crashes.
+# NOTE: Building with SD_VULKAN=ON on Windows requires a host C++ compiler
+# (Visual Studio, MinGW, or LLVM) to build the vulkan-shaders-gen tool.
 set(SD_VULKAN OFF CACHE BOOL "Enable Vulkan backend" FORCE)
-set(GGML_VULKAN OFF CACHE BOOL "Enable GGML Vulkan" FORCE)
 
 # Use custom FindVulkan that works with Android NDK cross-compilation
 list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+if(SD_VULKAN)
+    find_package(Vulkan REQUIRED)
+    add_definitions(-DSD_JNI_HAVE_VULKAN=1)
+endif()
+
+# Disable OpenMP to avoid libomp.so packaging issues on Android
+set(GGML_OPENMP OFF CACHE BOOL "Disable OpenMP to avoid packaging libomp.so" FORCE)
 
 # Add stable-diffusion.cpp
 set(SD_BUILD_EXAMPLES OFF CACHE BOOL "Disable SD examples")
@@ -38,14 +47,22 @@ add_library(sd_jni SHARED
     src/main/cpp/sd_jni_wrapper.cpp
 )
 
-target_link_libraries(sd_jni
+target_link_libraries(sd_jni PRIVATE
     stable-diffusion
     c++_shared
     android
     log
 )
 
+if(SD_VULKAN)
+    target_link_libraries(sd_jni PRIVATE Vulkan::Vulkan)
+endif()
+
 target_include_directories(sd_jni PRIVATE
     src/main/cpp/stable-diffusion.cpp/include
     src/main/cpp/stable-diffusion.cpp/src
 )
+
+if(SD_VULKAN)
+    target_include_directories(sd_jni PRIVATE ${Vulkan_INCLUDE_DIRS})
+endif()

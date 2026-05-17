@@ -8,6 +8,7 @@ import '../core/colors.dart';
 import '../models/ai_model.dart';
 import '../services/download_service.dart';
 import '../services/inference_service.dart';
+import '../services/local_image_service.dart';
 
 class ModelView extends GetView<ModelController> {
   const ModelView({super.key});
@@ -184,17 +185,41 @@ class ModelView extends GetView<ModelController> {
         child: Row(
           children: [
             for (final entry in labels.entries) ...[
-              ChoiceChip(
-                label: Text(entry.value),
-                selected: selected == entry.key,
-                onSelected: (_) => controller.setLocalFilter(entry.key),
-                selectedColor: AppColors.primary.withValues(alpha: 0.18),
-                labelStyle: GoogleFonts.inter(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: selected == entry.key
-                      ? AppColors.primary
-                      : Theme.of(context).hintColor,
+              InkWell(
+                onTap: () => controller.setLocalFilter(entry.key),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: selected == entry.key
+                        ? AppColors.primary.withValues(alpha: 0.18)
+                        : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: selected == entry.key
+                          ? AppColors.primary.withValues(alpha: 0.3)
+                          : Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (selected == entry.key) ...[
+                        const Icon(Icons.check, size: 16, color: AppColors.primary),
+                        const SizedBox(width: 4),
+                      ],
+                      Text(
+                        entry.value,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: selected == entry.key
+                              ? AppColors.primary
+                              : Theme.of(context).hintColor,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -289,6 +314,86 @@ class ModelView extends GetView<ModelController> {
       }
 
       final inference = Get.find<InferenceService>();
+      final localImage = Get.find<LocalImageService>();
+
+      // Image model loaded
+      if (localImage.isModelLoaded.value) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                AppColors.primary.withValues(alpha: 0.15),
+                AppColors.secondary.withValues(alpha: 0.1),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  localImage.isUsingGpu.value ? Icons.bolt : Icons.memory,
+                  color: localImage.isUsingGpu.value
+                      ? AppColors.warning
+                      : AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Active Image Model',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: Theme.of(context).hintColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      localImage.loadedModelName.value,
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      localImage.isUsingGpu.value
+                          ? '⚡ GPU Accelerated'
+                          : '🖥 CPU Mode',
+                      style: GoogleFonts.firaCode(
+                        fontSize: 10,
+                        color: localImage.isUsingGpu.value
+                            ? AppColors.success
+                            : Theme.of(context).hintColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.check_circle, color: AppColors.success, size: 20),
+            ],
+          ),
+        );
+      }
+
+      // Text model loaded
       if (!inference.isModelLoaded.value) {
         return const SizedBox.shrink();
       }
@@ -2040,12 +2145,18 @@ class ModelView extends GetView<ModelController> {
     return Obx(() {
       final isDownloaded = controller.isDownloaded(model.filename);
       final inference = Get.find<InferenceService>();
-      final isActive = inference.loadedModelName.value == model.filename;
+      final localImage = Get.find<LocalImageService>();
+      final isActive = inference.loadedModelName.value == model.filename ||
+          localImage.loadedModelName.value == model.filename;
       final isCurrentlyDownloading =
           controller.isDownloadingModel(model.filename);
-      final isAnyModelLoading = inference.isLoadingModel.value;
-      final isThisModelLoading = isAnyModelLoading &&
+      final isAnyModelLoading = inference.isLoadingModel.value ||
+          localImage.isLoadingModel.value;
+      final isThisTextModelLoading = inference.isLoadingModel.value &&
           inference.loadingModelName.value == model.filename;
+      final isThisImageModelLoading = localImage.isLoadingModel.value &&
+          localImage.loadedModelName.value == model.filename;
+      final isThisModelLoading = isThisTextModelLoading || isThisImageModelLoading;
       final disableActions = controller.isImporting.value ||
           isAnyModelLoading ||
           isCurrentlyDownloading;
@@ -2136,11 +2247,13 @@ class ModelView extends GetView<ModelController> {
                               ),
                             ),
                             child: Text(
-                              isThisModelLoading
-                                  ? '$loadPercent%'
-                                  : isActive
-                                      ? 'Active'
-                                      : 'Load',
+                              isThisImageModelLoading
+                                  ? 'Loading...'
+                                  : isThisTextModelLoading
+                                      ? '$loadPercent%'
+                                      : isActive
+                                          ? 'Active'
+                                          : 'Load',
                               style:
                                   const TextStyle(fontWeight: FontWeight.bold),
                             ),

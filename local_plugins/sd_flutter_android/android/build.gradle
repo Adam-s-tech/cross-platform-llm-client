@@ -62,6 +62,7 @@ android {
         cmake {
             path "CMakeLists.txt"
             version "3.22.1"
+            buildStagingDirectory file("C:/tmp/cxx_sd")
         }
     }
 

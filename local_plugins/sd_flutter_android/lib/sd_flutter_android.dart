@@ -10,13 +10,21 @@ class SdFlutterAndroid {
     return _channel.invokeMethod<String>('getPlatformVersion');
   }
 
-  static Future<dynamic> initModelRaw(String path) async {
-    final result = await _channel.invokeMethod<dynamic>('initModel', {'path': path});
+  static Future<String> detectGpuVendor() async {
+    final result = await _channel.invokeMethod<String>('detectGpuVendor');
+    return result ?? 'unknown';
+  }
+
+  static Future<dynamic> initModelRaw(String path, {bool useGpu = true}) async {
+    final result = await _channel.invokeMethod<dynamic>('initModel', {
+      'path': path,
+      'useGpu': useGpu,
+    });
     return result;
   }
 
-  static Future<bool> initModel(String path) async {
-    final result = await initModelRaw(path);
+  static Future<bool> initModel(String path, {bool useGpu = true}) async {
+    final result = await initModelRaw(path, useGpu: useGpu);
     if (result is bool) {
       return result;
     }

@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../services/download_service.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
@@ -504,7 +505,12 @@ class ModelController extends GetxController {
           description: '',
           template: '',
         ))) {
+      // Show loading dialog with live logs
+      _showImageModelLoadingDialog(filename);
       final result = await _localImage.loadModel(path, modelName: filename);
+      // Close loading dialog
+      if (Get.isDialogOpen ?? false) Get.back();
+
       final isError = !_localImage.isModelLoaded.value;
       Get.snackbar(
         isError ? 'Model Not Loaded' : 'Image Model',
@@ -783,6 +789,59 @@ class ModelController extends GetxController {
     } catch (_) {
       return 0;
     }
+  }
+
+  void _showImageModelLoadingDialog(String filename) {
+    final localImage = Get.find<LocalImageService>();
+    Get.dialog(
+      Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Get.isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 48,
+                height: 48,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Loading $filename',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Obx(() {
+                final log = localImage.latestLog.value;
+                if (log.isEmpty) {
+                  return const Text(
+                    'Initializing model...',
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  );
+                }
+                return Text(
+                  log,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+      barrierDismissible: false,
+    );
   }
 
   Future<void> unloadModel() async {

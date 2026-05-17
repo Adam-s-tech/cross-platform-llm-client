@@ -43,6 +43,7 @@ class SettingsController extends GetxController {
   final contextSize = 2048.obs;
   final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
   final imageSteps = 4.obs;
+  final imageGenForceCpu = false.obs;
   final fontScale = AppConstants.defaultFontScale.obs;
 
   // Persistent text controllers for settings fields
@@ -177,6 +178,9 @@ class SettingsController extends GetxController {
     imageSteps.value = _hive.getSetting(AppConstants.keyImageSteps,
             defaultValue: AppConstants.defaultImageSteps) ??
         AppConstants.defaultImageSteps;
+    imageGenForceCpu.value = _hive.getSetting(AppConstants.keyImageGenForceCpu,
+            defaultValue: false) ??
+        false;
     fontScale.value = _hive.getSetting(AppConstants.keyFontScale,
             defaultValue: AppConstants.defaultFontScale) ??
         AppConstants.defaultFontScale;
@@ -534,6 +538,11 @@ class SettingsController extends GetxController {
   Future<void> setImageSteps(int value) async {
     imageSteps.value = value;
     await _hive.setSetting(AppConstants.keyImageSteps, value);
+  }
+
+  Future<void> setImageGenForceCpu(bool value) async {
+    imageGenForceCpu.value = value;
+    await _hive.setSetting(AppConstants.keyImageGenForceCpu, value);
   }
 
   Future<void> setFontScale(double value) async {

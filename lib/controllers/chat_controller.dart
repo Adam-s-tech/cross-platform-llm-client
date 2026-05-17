@@ -74,6 +74,7 @@ class ChatController extends GetxController {
   final imageGenStep = 0.obs;
   final imageGenTotal = 0.obs;
   final imageGenEstimatedSecs = 0.obs;
+  final imageGenStartTime = Rxn<DateTime>();
 
   // Speech-to-text
   final isListening = false.obs;
@@ -564,21 +565,27 @@ class ChatController extends GetxController {
 
         if (localImage.isModelLoaded.value) {
           // Local image generation
+          final steps = _hive.getSetting<int>(AppConstants.keyImageSteps,
+              defaultValue: AppConstants.defaultImageSteps) ??
+              AppConstants.defaultImageSteps;
           imageGenStep.value = 0;
-          imageGenTotal.value = 0;
+          imageGenTotal.value = steps;
           imageGenEstimatedSecs.value = 0;
-          final genStart = DateTime.now();
+          imageGenStartTime.value = DateTime.now();
           final pngBytes = await localImage.generateImage(
             prompt: text,
             onProgress: (step, total) {
               imageGenStep.value = step;
               imageGenTotal.value = total;
               if (step > 0 && total > 0) {
-                final elapsed = DateTime.now().difference(genStart).inMilliseconds;
-                final avgMsPerStep = elapsed / step;
-                final remainingSteps = total - step;
-                imageGenEstimatedSecs.value =
-                    (avgMsPerStep * remainingSteps / 1000).ceil();
+                final start = imageGenStartTime.value;
+                if (start != null) {
+                  final elapsed = DateTime.now().difference(start).inMilliseconds;
+                  final avgMsPerStep = elapsed / step;
+                  final remainingSteps = total - step;
+                  imageGenEstimatedSecs.value =
+                      (avgMsPerStep * remainingSteps / 1000).ceil();
+                }
               }
               _scrollToBottom();
             },
@@ -711,7 +718,12 @@ class ChatController extends GetxController {
     isStreaming.value = false;
     streamingAttachmentType.value = null;
     streamingResponse.value = '';
+    imageGenStep.value = 0;
+    imageGenTotal.value = 0;
+    imageGenEstimatedSecs.value = 0;
+    imageGenStartTime.value = null;
     unawaited(Get.find<InferenceService>().stopGeneration());
+    Get.find<LocalImageService>().cancelGeneration();
   }
 
   void _saveAssistantMessage({

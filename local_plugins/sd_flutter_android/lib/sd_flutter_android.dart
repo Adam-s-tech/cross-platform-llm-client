@@ -15,6 +15,11 @@ class SdFlutterAndroid {
     return result ?? 'unknown';
   }
 
+  static Future<int> getDeviceMemory() async {
+    final result = await _channel.invokeMethod<int>('getDeviceMemory');
+    return result ?? 4096; // fallback: assume 4GB
+  }
+
   static Future<dynamic> initModelRaw(String path, {bool useGpu = true}) async {
     final result = await _channel.invokeMethod<dynamic>('initModel', {
       'path': path,

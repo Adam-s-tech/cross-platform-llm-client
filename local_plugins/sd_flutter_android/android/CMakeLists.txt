@@ -17,7 +17,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size
 # Adreno GPUs are blacklisted due to known GGML shader compiler crashes.
 # NOTE: Building with SD_VULKAN=ON on Windows requires a host C++ compiler
 # (Visual Studio, MinGW, or LLVM) to build the vulkan-shaders-gen tool.
-set(SD_VULKAN OFF CACHE BOOL "Enable Vulkan backend" FORCE)
+set(SD_VULKAN ON CACHE BOOL "Enable Vulkan backend" FORCE)
 
 # Use custom FindVulkan that works with Android NDK cross-compilation
 list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

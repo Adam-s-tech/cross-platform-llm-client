@@ -36,6 +36,14 @@ class SdIsolateProcessor {
   final bool flashAttn;
   final bool vaeTiling;
   final String? taesdPath;
+  final String? vaePath;
+  final String? clipLPath;
+  final Backend backend;
+  final QuantizationType quantizationType;
+  final bool offloadParamsToCpu;
+  final bool enableMmap;
+  final bool keepVaeOnCpu;
+  final double maxVram;
 
   Isolate? _isolate;
   SendPort? _sendPort;
@@ -58,6 +66,14 @@ class SdIsolateProcessor {
     this.flashAttn = false,
     this.vaeTiling = false,
     this.taesdPath,
+    this.vaePath,
+    this.clipLPath,
+    this.backend = Backend.cpu,
+    this.quantizationType = QuantizationType.f16,
+    this.offloadParamsToCpu = false,
+    this.enableMmap = false,
+    this.keepVaeOnCpu = false,
+    this.maxVram = 0.0,
   }) {
     _spawnIsolate();
   }
@@ -72,6 +88,14 @@ class SdIsolateProcessor {
         'flashAttn': flashAttn,
         'vaeTiling': vaeTiling,
         'taesdPath': taesdPath,
+        'vaePath': vaePath,
+        'clipLPath': clipLPath,
+        'backend': backend.index,
+        'quantizationType': quantizationType.nativeValue,
+        'offloadParamsToCpu': offloadParamsToCpu,
+        'enableMmap': enableMmap,
+        'keepVaeOnCpu': keepVaeOnCpu,
+        'maxVram': maxVram,
       },
     );
 
@@ -114,10 +138,14 @@ class SdIsolateProcessor {
 
   void _handleResult(Map message) {
     final completer = _activeCompleter;
-    if (completer == null || completer.isCompleted) return;
+    if (completer == null || completer.isCompleted) {
+      print('[MainIsolate] _handleResult: completer already completed or null');
+      return;
+    }
 
     final error = message['error'] as String?;
     if (error != null) {
+      print('[MainIsolate] _handleResult: completing with error: $error');
       completer.complete(GenerationResult(error: error));
       return;
     }
@@ -125,6 +153,7 @@ class SdIsolateProcessor {
     final bytes = message['bytes'] as Uint8List?;
     final width = (message['width'] as num?)?.toInt() ?? 0;
     final height = (message['height'] as num?)?.toInt() ?? 0;
+    print('[MainIsolate] _handleResult: completing with image ${width}x$height, ${bytes?.length} bytes');
     completer.complete(GenerationResult(
       rgbBytes: bytes,
       width: width,
@@ -144,8 +173,8 @@ class SdIsolateProcessor {
   Future<GenerationResult> generate({
     required String prompt,
     String negativePrompt = '',
-    int width = 512,
-    int height = 512,
+    int width = 384,
+    int height = 384,
     int steps = 4,
     int seed = -1,
     double cfgScale = 7.0,
@@ -209,9 +238,11 @@ class SdIsolateProcessor {
 
   static void _isolateEntryPoint(Map<String, dynamic> args) {
     final mainSendPort = args['port'] as SendPort;
+    final backendIndex = args['backend'] as int? ?? 0;
+    final backend = Backend.values[backendIndex];
 
-    // Initialize FFI inside the isolate
-    SdFfiBindings.initialize();
+    // Initialize FFI inside the isolate with selected backend
+    SdFfiBindings.initialize(backend);
 
     // Setup callbacks that post back to main isolate
     final isolateReceivePort = ReceivePort();
@@ -247,13 +278,31 @@ class SdIsolateProcessor {
     final flashAttn = args['flashAttn'] as bool;
     final vaeTiling = args['vaeTiling'] as bool;
     final taesdPath = args['taesdPath'] as String?;
+    final vaePath = args['vaePath'] as String?;
+    final clipLPath = args['clipLPath'] as String?;
+    final wtype = args['quantizationType'] as int? ?? 1; // default FP16
+    final offloadParamsToCpu = args['offloadParamsToCpu'] as bool? ?? false;
+    final enableMmap = args['enableMmap'] as bool? ?? false;
+    final keepVaeOnCpu = args['keepVaeOnCpu'] as bool? ?? false;
+    final maxVram = (args['maxVram'] as num?)?.toDouble() ?? 0.0;
 
     final pathPtr = modelPath.toNativeUtf8();
     final taesdPtr = (taesdPath != null && taesdPath.isNotEmpty)
         ? taesdPath.toNativeUtf8()
         : nullptr;
+    final vaePtr = (vaePath != null && vaePath.isNotEmpty)
+        ? vaePath.toNativeUtf8()
+        : nullptr;
+    final clipLPtr = (clipLPath != null && clipLPath.isNotEmpty)
+        ? clipLPath.toNativeUtf8()
+        : nullptr;
     try {
-      final newCtx = SdFfiBindings.init(pathPtr, nThreads, flashAttn, vaeTiling, taesdPtr);
+      final newCtx = SdFfiBindings.initEx(
+        pathPtr, nThreads, flashAttn, vaeTiling,
+        taesdPtr, vaePtr, clipLPtr,
+        wtype, backendIndex,
+        offloadParamsToCpu, enableMmap, keepVaeOnCpu, maxVram,
+      );
       if (newCtx.address == 0) {
         ctx = null;
         mainSendPort.send({
@@ -267,6 +316,8 @@ class SdIsolateProcessor {
     } finally {
       calloc.free(pathPtr);
       if (taesdPtr != nullptr) calloc.free(taesdPtr);
+      if (vaePtr != nullptr) calloc.free(vaePtr);
+      if (clipLPtr != nullptr) calloc.free(clipLPtr);
     }
   }
 
@@ -276,6 +327,7 @@ class SdIsolateProcessor {
     Map message,
   ) {
     if (ctx == null || ctx.address == 0) {
+      print('[Isolate] ERROR: Model not initialized');
       mainSendPort.send({
         'type': 'error',
         'message': 'Model not initialized',
@@ -294,11 +346,14 @@ class SdIsolateProcessor {
     final schedule = message['schedule'] as int;
     final vaeTiling = message['vaeTiling'] as bool;
 
+    print('[Isolate] _runGeneration started: prompt="$prompt", ${width}x$height, steps=$steps, seed=$seed');
+
     final promptPtr = prompt.toNativeUtf8();
     final negPtr = negativePrompt.toNativeUtf8();
     final outSizePtr = calloc<IntPtr>(1);
 
     try {
+      print('[Isolate] Calling FFI generate()...');
       final resultPtr = SdFfiBindings.generate(
         ctx,
         promptPtr,
@@ -313,10 +368,13 @@ class SdIsolateProcessor {
         vaeTiling,
         outSizePtr,
       );
+      print('[Isolate] FFI generate() returned, resultPtr=${resultPtr.address}');
 
       final outSize = outSizePtr.value;
+      print('[Isolate] outSize=$outSize');
 
       if (resultPtr.address == 0 || outSize == 0) {
+        print('[Isolate] ERROR: null result or zero size');
         mainSendPort.send({
           'type': 'result',
           'error': 'Image generation failed (null result)',
@@ -324,21 +382,27 @@ class SdIsolateProcessor {
         return;
       }
 
+      print('[Isolate] Copying $outSize bytes from native buffer...');
       // Copy native bytes into Dart-managed Uint8List
       final rgbBytes = Uint8List.fromList(
         resultPtr.asTypedList(outSize),
       );
+      print('[Isolate] Copied ${rgbBytes.length} bytes');
 
       // Free native buffer
       calloc.free(resultPtr);
 
+      print('[Isolate] Sending result to main isolate');
       mainSendPort.send({
         'type': 'result',
         'bytes': rgbBytes,
         'width': width,
         'height': height,
       });
-    } catch (e) {
+      print('[Isolate] Result sent');
+    } catch (e, stack) {
+      print('[Isolate] EXCEPTION: $e');
+      print('[Isolate] STACK: $stack');
       mainSendPort.send({
         'type': 'result',
         'error': 'Generation exception: $e',
@@ -347,6 +411,7 @@ class SdIsolateProcessor {
       calloc.free(promptPtr);
       calloc.free(negPtr);
       calloc.free(outSizePtr);
+      print('[Isolate] _runGeneration finished');
     }
   }
 }

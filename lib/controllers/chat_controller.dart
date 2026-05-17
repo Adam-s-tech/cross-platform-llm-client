@@ -75,6 +75,7 @@ class ChatController extends GetxController {
   final imageGenTotal = 0.obs;
   final imageGenEstimatedSecs = 0.obs;
   final imageGenStartTime = Rxn<DateTime>();
+  final imageGenDecoding = false.obs;
 
   // Speech-to-text
   final isListening = false.obs;
@@ -572,12 +573,19 @@ class ChatController extends GetxController {
           imageGenTotal.value = steps;
           imageGenEstimatedSecs.value = 0;
           imageGenStartTime.value = DateTime.now();
+          imageGenDecoding.value = false;
+          print('[ChatController] Starting image generation for: $text');
           final pngBytes = await localImage.generateImage(
             prompt: text,
             onProgress: (step, total) {
+              print('[ChatController] Progress callback: step=$step, total=$total');
               imageGenStep.value = step;
               imageGenTotal.value = total;
-              if (step > 0 && total > 0) {
+              if (step >= total && total > 0) {
+                imageGenDecoding.value = true;
+                print('[ChatController] Sampling complete, VAE decode in progress');
+              }
+              if (step > 0 && total > 0 && step < total) {
                 final start = imageGenStartTime.value;
                 if (start != null) {
                   final elapsed = DateTime.now().difference(start).inMilliseconds;
@@ -590,6 +598,7 @@ class ChatController extends GetxController {
               _scrollToBottom();
             },
           );
+          print('[ChatController] generateImage returned, bytes=${pngBytes?.length}');
 
           if (pngBytes != null) {
             rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
@@ -650,6 +659,7 @@ class ChatController extends GetxController {
       streamingResponse.value = '';
       imageGenStep.value = 0;
       imageGenTotal.value = 0;
+      imageGenDecoding.value = false;
 
       String? outImageBase64;
       if (rawResponse.startsWith('[IMAGE_BASE64]')) {
@@ -686,6 +696,7 @@ class ChatController extends GetxController {
       streamingResponse.value = '';
       imageGenStep.value = 0;
       imageGenTotal.value = 0;
+      imageGenDecoding.value = false;
       Get.find<AppLogService>().error('Chat response failed', details: e);
       final errorMsg = ChatMessage(
         id: _uuid.v4(),
@@ -722,6 +733,7 @@ class ChatController extends GetxController {
     imageGenTotal.value = 0;
     imageGenEstimatedSecs.value = 0;
     imageGenStartTime.value = null;
+    imageGenDecoding.value = false;
     unawaited(Get.find<InferenceService>().stopGeneration());
     Get.find<LocalImageService>().cancelGeneration();
   }

@@ -56,6 +56,8 @@ class AppConstants {
   static const String keyServerNgrokDomain = 'server_ngrok_domain';
   static const String keyImageSteps = 'image_steps';
   static const String keyImageGenForceCpu = 'image_gen_force_cpu';
+  static const String keyImageGenBackend = 'image_gen_backend';
+  static const String keyImageGenQuantization = 'image_gen_quantization';
   static const String keyFontScale = 'font_scale';
 
   // Default Model Config

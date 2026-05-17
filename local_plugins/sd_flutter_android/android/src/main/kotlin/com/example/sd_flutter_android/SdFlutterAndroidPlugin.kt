@@ -1,5 +1,8 @@
 package com.example.sd_flutter_android
 
+import android.app.ActivityManager
+import android.content.Context
+import android.os.Build
 import androidx.annotation.NonNull
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
@@ -10,6 +13,7 @@ import kotlinx.coroutines.*
 
 class SdFlutterAndroidPlugin: FlutterPlugin, MethodCallHandler {
   private lateinit var channel : MethodChannel
+  private var context: Context? = null
   private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
   // Callback object passed to JNI; JNI calls onProgress(step, total) from worker threads
@@ -23,16 +27,55 @@ class SdFlutterAndroidPlugin: FlutterPlugin, MethodCallHandler {
   }
 
   // Native methods (linked to sd_jni_wrapper.cpp)
-  private external fun detectGpuVendor(): String
+  private external fun detectGpuVendorNative(): String
   private external fun initModel(path: String, useGpu: Boolean): Boolean
   private external fun generateImage(prompt: String, steps: Int, callback: ProgressCallback): ByteArray?
   private external fun unloadModel()
+
+  /**
+   * Detect GPU vendor without requiring a Vulkan or GL context.
+   * Falls back to sysfs probing and Build.HARDWARE heuristics.
+   */
+  private fun detectGpuVendor(): String {
+    val vendor = detectGpuVendorNative()
+    if (vendor != "unknown") {
+      return vendor
+    }
+
+    // 1. Adreno via kgsl sysfs (Qualcomm devices)
+    try {
+      val kgslModel = java.io.File("/sys/class/kgsl/kgsl-3d0/gpu_model").readText().trim().lowercase()
+      if (kgslModel.contains("adreno")) {
+        return "adreno"
+      }
+    } catch (_: Exception) { }
+
+    // 2. Mali via sysfs
+    try {
+      java.io.File("/sys/class/misc/mali0/device/clock").readText().trim()
+      return "mali"
+    } catch (_: Exception) { }
+
+    try {
+      java.io.File("/sys/class/misc/mali0/device/utgard_clock").readText().trim()
+      return "mali"
+    } catch (_: Exception) { }
+
+    // 3. Hardware heuristic fallback
+    val hw = Build.HARDWARE.lowercase()
+    return when {
+      hw.contains("qcom") || hw.contains("sdm") || hw.contains("sm8") || hw.contains("sm7") -> "adreno"
+      hw.contains("exynos") || hw.contains("gs1") || hw.contains("mt6") || hw.contains("unisoc") -> "mali"
+      else -> "unknown"
+    }
+  }
 
   init {
     System.loadLibrary("sd_jni")
   }
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+    context = flutterPluginBinding.applicationContext
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "sd_flutter_android")
     channel.setMethodCallHandler(this)
   }
@@ -49,6 +92,19 @@ class SdFlutterAndroidPlugin: FlutterPlugin, MethodCallHandler {
             withContext(Dispatchers.Main) { result.success(vendor) }
           } catch (e: Exception) {
             withContext(Dispatchers.Main) { result.error("DETECT_FAILED", e.message, null) }
+          }
+        }
+      }
+      "getDeviceMemory" -> {
+        scope.launch {
+          try {
+            val memInfo = ActivityManager.MemoryInfo()
+            val am = context?.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            am?.getMemoryInfo(memInfo)
+            val totalMb = (memInfo.totalMem / (1024 * 1024)).toInt()
+            withContext(Dispatchers.Main) { result.success(totalMb) }
+          } catch (e: Exception) {
+            withContext(Dispatchers.Main) { result.error("MEMORY_FAILED", e.message, null) }
           }
         }
       }

@@ -10,6 +10,7 @@ import '../controllers/model_controller.dart';
 import '../controllers/home_controller.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
+import '../ffi/sd_ffi_bindings.dart';
 import '../utils/thought_parser.dart';
 import '../widgets/attachment_preview.dart';
 import '../widgets/chat_bubble.dart';
@@ -100,8 +101,10 @@ class ChatView extends GetView<ChatController> {
                 .replaceAll('.gguf', '')
                 .replaceAll('.GGUF', '');
           } else if (localImage.isModelLoaded.value) {
-            final backend = localImage.isUsingGpu.value ? '⚡' : '🖥';
-            model = '$backend ${localImage.loadedModelName.value
+            final backend = localImage.currentBackend.value;
+            final backendEmoji = backend == Backend.cpu ? '🖥' : '⚡';
+            final backendName = backend.displayName.split(' ').first;
+            model = '$backendEmoji $backendName · ${localImage.loadedModelName.value
                 .replaceAll('.gguf', '')
                 .replaceAll('.GGUF', '')}';
           } else {
@@ -1093,6 +1096,31 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
     return s > 0 ? '${m}m ${s}s' : '${m}m';
   }
 
+  Widget _backendChip(BuildContext context) {
+    final localImage = Get.find<LocalImageService>();
+    final backend = localImage.currentBackend.value;
+    final isCpu = backend == Backend.cpu;
+    final color = isCpu
+        ? const Color(0xFFFF9500) // Orange for CPU
+        : const Color(0xFF34C759); // Green for GPU
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+      ),
+      child: Text(
+        isCpu ? 'CPU · Slow' : backend.displayName.split(' ').first.toUpperCase(),
+        style: GoogleFonts.inter(
+          fontSize: 9,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -1126,8 +1154,10 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
           final step = widget.controller.imageGenStep.value;
           final total = widget.controller.imageGenTotal.value;
           final eta = widget.controller.imageGenEstimatedSecs.value;
+          final decoding = widget.controller.imageGenDecoding.value;
           final hasProgress = total > 0;
           final pct = hasProgress ? (step / total).clamp(0.0, 1.0) : 0.0;
+          final isDone = decoding || (hasProgress && step >= total);
 
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -1136,7 +1166,7 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
               dots,
               const SizedBox(height: 10),
               Text(
-                'Generating image',
+                isDone ? 'Decoding image' : 'Generating image',
                 style: GoogleFonts.inter(
                   fontSize: 13,
                   color: Theme.of(context).hintColor,
@@ -1145,7 +1175,7 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
               ),
               if (hasProgress) ...[
                 const SizedBox(height: 10),
-                // Progress bar
+                // Progress bar (pulse at 100% during decode)
                 Container(
                   width: 160,
                   height: 4,
@@ -1156,7 +1186,7 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
                   ),
                   child: FractionallySizedBox(
                     alignment: Alignment.centerLeft,
-                    widthFactor: pct,
+                    widthFactor: isDone ? 1.0 : pct,
                     child: Container(
                       decoration: BoxDecoration(
                         color: _appleBlue(context),
@@ -1166,15 +1196,20 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Percentage + steps
+                // Percentage + steps / decoding message
                 Text(
-                  '${(pct * 100).toStringAsFixed(0)}% · Step $step of $total',
+                  isDone
+                      ? 'VAE decode in progress…'
+                      : '${(pct * 100).toStringAsFixed(0)}% · Step $step of $total',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     color: Theme.of(context).hintColor.withValues(alpha: 0.6),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+                // Backend badge
+                const SizedBox(height: 5),
+                _backendChip(context),
                 // Elapsed time
                 const SizedBox(height: 3),
                 Text(
@@ -1184,8 +1219,8 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
                     color: Theme.of(context).hintColor.withValues(alpha: 0.45),
                   ),
                 ),
-                // ETA (only if we have a real estimate)
-                if (eta > 0 && step >= 2) ...[
+                // ETA (only if we have a real estimate and not done)
+                if (eta > 0 && step >= 2 && !isDone) ...[
                   const SizedBox(height: 3),
                   Text(
                     _fmtEta(eta),

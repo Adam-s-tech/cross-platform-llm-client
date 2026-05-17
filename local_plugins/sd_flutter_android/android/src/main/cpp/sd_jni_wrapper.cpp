@@ -85,7 +85,7 @@ void sd_progress_cb(int step, int steps, float time, void* data) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_detectGpuVendor(
+Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_detectGpuVendorNative(
     JNIEnv* env, jobject thiz) {
 
 #ifdef SD_JNI_HAVE_VULKAN
@@ -337,24 +337,71 @@ SD_FFI_API void sd_ffi_set_log_callback(sd_ffi_log_fn cb) {
     sd_set_log_callback(cb ? sd_ffi_log_trampoline : nullptr, nullptr);
 }
 
-// Initialize model. Returns opaque context pointer, or NULL on failure.
-// model_path: absolute path to .safetensors or .ckpt
-// n_threads: 0 = auto (sd_get_num_physical_cores)
-// flash_attn: enable flash attention
-// vae_tiling: enable VAE tiling
-SD_FFI_API void* sd_ffi_init(const char* model_path, int n_threads, bool flash_attn, bool vae_tiling, const char* taesd_path) {
+// Extended init with full stable-diffusion.cpp parameter exposure.
+// Paths may be NULL to use defaults / embedded components.
+SD_FFI_API void* sd_ffi_init_ex(const char* model_path,
+                                int n_threads,
+                                bool flash_attn,
+                                bool vae_tiling,
+                                const char* taesd_path,
+                                const char* vae_path,
+                                const char* clip_l_path,
+                                int wtype,
+                                int backend,
+                                bool offload_params_to_cpu,
+                                bool enable_mmap,
+                                bool keep_vae_on_cpu,
+                                float max_vram) {
     if (g_ffi_sd_ctx) {
         free_sd_ctx(g_ffi_sd_ctx);
         g_ffi_sd_ctx = nullptr;
     }
     g_ffi_model_path = model_path ? model_path : "";
 
+    // Backend selection via environment variables
+    // backend: 0=CPU, 1=Vulkan, 2=OpenCL
+    if (backend == 0) {
+        // Force CPU: hide all Vulkan devices from ggml
+        setenv("GGML_VK_VISIBLE_DEVICES", "", 1);
+        LOGI("[FFI] Backend: CPU (forced via GGML_VK_VISIBLE_DEVICES)");
+    } else if (backend == 1) {
+        // Allow Vulkan with conservative mobile settings
+        unsetenv("GGML_VK_VISIBLE_DEVICES");
+        setenv("GGML_VK_DISABLE_COOPMAT", "1", 1);
+        setenv("GGML_VK_DISABLE_GRAPH_OPTIMIZE", "1", 1);
+        setenv("GGML_VK_PREFER_HOST_MEMORY", "1", 1);
+        LOGI("[FFI] Backend: Vulkan (mobile conservative flags)");
+    } else if (backend == 2) {
+        unsetenv("GGML_VK_VISIBLE_DEVICES");
+        LOGI("[FFI] Backend: OpenCL");
+    }
+
     sd_ctx_params_t params;
     sd_ctx_params_init(&params);
-    params.model_path = model_path;
+    params.model_path = model_path ? model_path : "";
     params.n_threads = (n_threads > 0) ? n_threads : sd_get_num_physical_cores();
     params.flash_attn = flash_attn;
     params.free_params_immediately = false;
+    params.wtype = (sd_type_t)wtype;
+    params.offload_params_to_cpu = offload_params_to_cpu;
+    params.enable_mmap = enable_mmap;
+    params.keep_vae_on_cpu = keep_vae_on_cpu;
+    if (max_vram > 0.0f) {
+        params.max_vram = max_vram;
+    }
+
+    // NOTE: vae_tiling is NOT a member of sd_ctx_params_t.
+    // It belongs to sd_img_gen_params_t and is applied per-generation in sd_ffi_generate().
+    (void)vae_tiling;
+
+    if (vae_path && vae_path[0] != '\0') {
+        params.vae_path = vae_path;
+        LOGI("[FFI] Using separate VAE: %s", vae_path);
+    }
+    if (clip_l_path && clip_l_path[0] != '\0') {
+        params.clip_l_path = clip_l_path;
+        LOGI("[FFI] Using separate CLIP-L: %s", clip_l_path);
+    }
 
     // TAESD: tiny autoencoder for much faster VAE decode (10-30s saved per image)
     if (taesd_path && taesd_path[0] != '\0') {
@@ -362,11 +409,17 @@ SD_FFI_API void* sd_ffi_init(const char* model_path, int n_threads, bool flash_a
         LOGI("[FFI] Using TAESD for fast decode: %s", taesd_path);
     }
 
-    LOGI("[FFI] Initializing SD model: %s (threads=%d, flash_attn=%d)",
-         model_path, params.n_threads, flash_attn);
+    LOGI("[FFI] Initializing SD model: %s (threads=%d, flash_attn=%d, wtype=%d, backend=%d, offload=%d, mmap=%d, keep_vae_cpu=%d)",
+         model_path, params.n_threads, flash_attn, wtype, backend,
+         offload_params_to_cpu, enable_mmap, keep_vae_on_cpu);
 
     g_ffi_sd_ctx = new_sd_ctx(&params);
     return g_ffi_sd_ctx;
+}
+
+// Convenience wrapper around sd_ffi_init_ex with defaults for optional params.
+SD_FFI_API void* sd_ffi_init(const char* model_path, int n_threads, bool flash_attn, bool vae_tiling, const char* taesd_path, int wtype, int backend) {
+    return sd_ffi_init_ex(model_path, n_threads, flash_attn, vae_tiling, taesd_path, nullptr, nullptr, wtype, backend, false, false, false, 0.0f);
 }
 
 // Free model context.
@@ -434,7 +487,10 @@ SD_FFI_API uint8_t* sd_ffi_generate(void* ctx,
         g_ffi_progress(0, steps, 0.0f);
     }
 
+    LOGI("[FFI] [PHASE] Calling generate_image()...");
     sd_image_t* result = generate_image((sd_ctx_t*)ctx, &params);
+    LOGI("[FFI] [PHASE] generate_image() returned");
+
     if (!result) {
         LOGE("[FFI] generate_image returned null");
         return nullptr;
@@ -447,6 +503,8 @@ SD_FFI_API uint8_t* sd_ffi_generate(void* ctx,
     }
 
     size_t pixel_count = (size_t)result->width * result->height * result->channel;
+    LOGI("[FFI] [PHASE] Copying result buffer: %dx%d x %d channels = %zu bytes",
+         result->width, result->height, result->channel, pixel_count);
     uint8_t* buf = (uint8_t*)malloc(pixel_count);
     if (buf) {
         memcpy(buf, result->data, pixel_count);
@@ -458,6 +516,7 @@ SD_FFI_API uint8_t* sd_ffi_generate(void* ctx,
 
     free(result->data);
     free(result);
+    LOGI("[FFI] [PHASE] Returning buffer to Dart");
     return buf;
 }
 

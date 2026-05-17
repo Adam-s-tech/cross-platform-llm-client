@@ -41,8 +41,19 @@ class ModelController extends GetxController {
   final importCopiedBytes = 0.obs;
   final importTotalBytes = 0.obs;
   final importBytesPerSecond = 0.0.obs;
+  final sortSmallestFirst = true.obs;
 
-  static const localFilters = ['downloaded', 'general', 'image', 'uncensored', 'vision'];
+  void toggleSort() {
+    sortSmallestFirst.value = !sortSmallestFirst.value;
+  }
+
+  static const localFilters = [
+    'downloaded',
+    'general',
+    'image',
+    'uncensored',
+    'vision'
+  ];
 
   List<AiModel> get displayedModels {
     final active = _inference.loadedModelName.value;
@@ -53,10 +64,13 @@ class ModelController extends GetxController {
       final aDownloaded = isDownloaded(a.filename);
       final bDownloaded = isDownloaded(b.filename);
       if (aDownloaded != bDownloaded) return aDownloaded ? -1 : 1;
-      final aBytes = _knownModelBytes(a);
-      final bBytes = _knownModelBytes(b);
-      if (aBytes > 0 && bBytes > 0 && aBytes != bBytes) {
-        return aBytes.compareTo(bBytes);
+
+      if (sortSmallestFirst.value) {
+        final aBytes = _knownModelBytes(a);
+        final bBytes = _knownModelBytes(b);
+        if (aBytes > 0 && bBytes > 0 && aBytes != bBytes) {
+          return aBytes.compareTo(bBytes);
+        }
       }
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
@@ -309,9 +323,9 @@ class ModelController extends GetxController {
       ),
       isVision: isVision &&
           AiModel.runtimeFromFilename(
-            resolvedFilename,
-            template: template.trim().isEmpty ? 'chatml' : template.trim(),
-          ) ==
+                resolvedFilename,
+                template: template.trim().isEmpty ? 'chatml' : template.trim(),
+              ) ==
               AiModel.runtimeLiteRt,
       isCustom: true,
     );
@@ -426,7 +440,8 @@ class ModelController extends GetxController {
     }
     if (isLiteRt && !await _confirmLiteRtGpuWarning()) return;
 
-    if (isImageModel(model ?? AiModel(
+    if (isImageModel(model ??
+        AiModel(
           name: filename,
           filename: filename,
           url: '',
@@ -444,7 +459,8 @@ class ModelController extends GetxController {
             ? const Color(0xFFFF9500).withValues(alpha: 0.15)
             : const Color(0xFF34C759).withValues(alpha: 0.15),
         colorText: isError ? const Color(0xFFFF9500) : const Color(0xFF34C759),
-        duration: isError ? const Duration(seconds: 6) : const Duration(seconds: 2),
+        duration:
+            isError ? const Duration(seconds: 6) : const Duration(seconds: 2),
       );
     } else {
       final result = await _inference.loadModel(
@@ -456,8 +472,40 @@ class ModelController extends GetxController {
         _inference.isVisionLoaded.value =
             model == null ? false : isVisionModel(model);
         await _settings.setInferenceMode('local');
+        Get.snackbar('Model Loaded', result,
+            snackPosition: SnackPosition.BOTTOM);
+      } else {
+        Get.dialog(
+          AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.error_outline),
+                SizedBox(width: 10),
+                Expanded(
+                    child: Text('Model Load Failed',
+                        style: TextStyle(fontWeight: FontWeight.w700))),
+              ],
+            ),
+            content: Text(
+              result,
+              style: const TextStyle(fontSize: 14, height: 1.4),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Get.back(),
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('OK',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
       }
-      Get.snackbar('Text Model', result, snackPosition: SnackPosition.BOTTOM);
     }
   }
 

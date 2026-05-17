@@ -208,6 +208,13 @@ class InferenceEngine {
       );
     } catch (error) {
       print('[Inference] LiteRT-LM load failed: $error');
+      final errorStr = error.toString();
+      if (errorStr.contains('exactly one signature but got')) {
+        return LoadResult(
+          success: false,
+          message: 'This vision model is incompatible with the LiteRT engine (expected 1 signature, found multiple). Please try a standard GGUF model or a text-only LiteRT model instead.',
+        );
+      }
       rethrow;
     }
   }

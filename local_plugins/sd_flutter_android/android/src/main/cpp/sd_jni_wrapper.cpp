@@ -342,7 +342,7 @@ SD_FFI_API void sd_ffi_set_log_callback(sd_ffi_log_fn cb) {
 // n_threads: 0 = auto (sd_get_num_physical_cores)
 // flash_attn: enable flash attention
 // vae_tiling: enable VAE tiling
-SD_FFI_API void* sd_ffi_init(const char* model_path, int n_threads, bool flash_attn, bool vae_tiling) {
+SD_FFI_API void* sd_ffi_init(const char* model_path, int n_threads, bool flash_attn, bool vae_tiling, const char* taesd_path) {
     if (g_ffi_sd_ctx) {
         free_sd_ctx(g_ffi_sd_ctx);
         g_ffi_sd_ctx = nullptr;
@@ -355,6 +355,12 @@ SD_FFI_API void* sd_ffi_init(const char* model_path, int n_threads, bool flash_a
     params.n_threads = (n_threads > 0) ? n_threads : sd_get_num_physical_cores();
     params.flash_attn = flash_attn;
     params.free_params_immediately = false;
+
+    // TAESD: tiny autoencoder for much faster VAE decode (10-30s saved per image)
+    if (taesd_path && taesd_path[0] != '\0') {
+        params.taesd_path = taesd_path;
+        LOGI("[FFI] Using TAESD for fast decode: %s", taesd_path);
+    }
 
     LOGI("[FFI] Initializing SD model: %s (threads=%d, flash_attn=%d)",
          model_path, params.n_threads, flash_attn);

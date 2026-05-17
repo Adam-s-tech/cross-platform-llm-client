@@ -35,6 +35,7 @@ class SdIsolateProcessor {
   final int nThreads;
   final bool flashAttn;
   final bool vaeTiling;
+  final String? taesdPath;
 
   Isolate? _isolate;
   SendPort? _sendPort;
@@ -56,6 +57,7 @@ class SdIsolateProcessor {
     this.nThreads = 0,
     this.flashAttn = false,
     this.vaeTiling = false,
+    this.taesdPath,
   }) {
     _spawnIsolate();
   }
@@ -69,6 +71,7 @@ class SdIsolateProcessor {
         'nThreads': nThreads,
         'flashAttn': flashAttn,
         'vaeTiling': vaeTiling,
+        'taesdPath': taesdPath,
       },
     );
 
@@ -243,10 +246,14 @@ class SdIsolateProcessor {
     final nThreads = args['nThreads'] as int;
     final flashAttn = args['flashAttn'] as bool;
     final vaeTiling = args['vaeTiling'] as bool;
+    final taesdPath = args['taesdPath'] as String?;
 
     final pathPtr = modelPath.toNativeUtf8();
+    final taesdPtr = (taesdPath != null && taesdPath.isNotEmpty)
+        ? taesdPath.toNativeUtf8()
+        : nullptr;
     try {
-      final newCtx = SdFfiBindings.init(pathPtr, nThreads, flashAttn, vaeTiling);
+      final newCtx = SdFfiBindings.init(pathPtr, nThreads, flashAttn, vaeTiling, taesdPtr);
       if (newCtx.address == 0) {
         ctx = null;
         mainSendPort.send({
@@ -259,6 +266,7 @@ class SdIsolateProcessor {
       }
     } finally {
       calloc.free(pathPtr);
+      if (taesdPtr != nullptr) calloc.free(taesdPtr);
     }
   }
 

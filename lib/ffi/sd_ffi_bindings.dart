@@ -63,12 +63,14 @@ typedef SdFfiInitNative = Pointer<Void> Function(
     Int32 nThreads,
     Bool flashAttn,
     Bool vaeTiling,
+    Pointer<Utf8> taesdPath,
 );
 typedef SdFfiInit = Pointer<Void> Function(
     Pointer<Utf8> modelPath,
     int nThreads,
     bool flashAttn,
     bool vaeTiling,
+    Pointer<Utf8> taesdPath,
 );
 
 typedef SdFfiFreeNative = Void Function(Pointer<Void> ctx);

@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:ui';
+
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'firebase_options.dart';
 import 'controllers/settings_controller.dart';
 import 'controllers/cloud_model_controller.dart';
 import 'controllers/server_controller.dart';
@@ -17,53 +22,113 @@ import 'services/download_service.dart';
 import 'services/device_info_service.dart';
 import 'services/local_image_service.dart';
 import 'services/app_log_service.dart';
+import 'services/crash_reporting_service.dart';
 import 'services/image_generation_notification_service.dart';
 import 'core/constants.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  final appLogBuffer = <String>[];
 
-  // Lock to portrait (mobile only)
-  if (!kIsWeb) {
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
-  }
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Hive
-  await Hive.initFlutter();
+    // Register logger first so everything routes to it
+    final appLog = AppLogService();
+    Get.put(appLog);
 
-  // Register global services
-  await Get.putAsync(() => HiveService().init());
-  await Get.putAsync(() => DeviceInfoService().init());
+    // Flush buffered prints
+    for (final line in appLogBuffer) {
+      appLog.info(line);
+    }
+    appLogBuffer.clear();
 
-  // Settings controller must be initialized before runApp for theme support
-  final settingsController = Get.put(SettingsController());
-  Get.put(CloudModelController());
+    // Initialize Firebase before any Firebase-dependent services
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    } catch (e) {
+      appLog.error('[Firebase] Initialization failed', details: e);
+    }
 
-  Get.put(InferenceService());
-  Get.put(CloudService());
-  Get.put(DownloadService());
-  Get.put(LocalImageService());
-  Get.put(AppLogService());
-  final imageNotifications = Get.put(ImageGenerationNotificationService());
-  await imageNotifications.init();
-  await imageNotifications.configureBackgroundService();
-  Get.put(ServerController(), permanent: true);
-  Get.put(ModelController());
+    // Lock to portrait (mobile only)
+    if (!kIsWeb) {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    }
 
-  // Auto-configure inference settings based on device RAM
-  _autoConfigureForDevice();
+    // Initialize Hive
+    await Hive.initFlutter();
 
-  // Keep last model as a quick-load option, but do not auto-load on startup.
-  _validateLastModel();
+    // Register global services
+    await Get.putAsync(() => HiveService().init());
+    await Get.putAsync(() => DeviceInfoService().init());
 
-  runApp(const PrivateLMApp());
+    // Settings controller must be initialized before runApp for theme support
+    final settingsController = Get.put(SettingsController());
+    Get.put(CloudModelController());
 
-  // Apply system UI after frame is rendered so Get.mediaQuery is available
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    settingsController.setThemeMode(settingsController.themeMode.value);
-  });
+    Get.put(InferenceService());
+    Get.put(CloudService());
+    Get.put(DownloadService());
+    Get.put(LocalImageService());
+    final crashReporting = await Get.putAsync(() => CrashReportingService().init());
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      appLog.error(
+        details.exceptionAsString(),
+        details: details.stack?.toString() ?? 'No stack',
+      );
+      crashReporting.recordFlutterFatal(details);
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      appLog.error(
+        error.toString(),
+        details: stack.toString(),
+      );
+      crashReporting.recordFatal(error, stack, reason: 'platform_dispatcher');
+      return true;
+    };
+    final imageNotifications = Get.put(ImageGenerationNotificationService());
+    await imageNotifications.init();
+    await imageNotifications.configureBackgroundService();
+    Get.put(ServerController(), permanent: true);
+    Get.put(ModelController());
+
+    // Auto-configure inference settings based on device RAM
+    _autoConfigureForDevice();
+
+    // Keep last model as a quick-load option, but do not auto-load on startup.
+    _validateLastModel();
+
+    runApp(const PrivateLMApp());
+
+    // Apply system UI after frame is rendered so Get.mediaQuery is available
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      settingsController.setThemeMode(settingsController.themeMode.value);
+    });
+  }, (error, stack) async {
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().error(
+        'Uncaught zone error: $error',
+        details: stack.toString(),
+      );
+    }
+    if (Get.isRegistered<CrashReportingService>()) {
+      await Get.find<CrashReportingService>()
+          .recordFatal(error, stack, reason: 'run_zoned_guarded');
+    }
+  }, zoneSpecification: ZoneSpecification(
+    print: (self, parent, zone, line) {
+      if (Get.isRegistered<AppLogService>()) {
+        Get.find<AppLogService>().info(line);
+      } else {
+        appLogBuffer.add(line);
+      }
+      parent.print(zone, line);
+    },
+  ));
 }
 
 /// Validates that remembered models still exist on disk.

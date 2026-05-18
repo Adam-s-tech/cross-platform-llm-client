@@ -11,6 +11,33 @@ class LogView extends StatelessWidget {
   Widget build(BuildContext context) {
     final logs = Get.find<AppLogService>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final showAll = false.obs;
+
+    Color levelColor(String level) {
+      switch (level) {
+        case 'ERROR':
+          return AppColors.error;
+        case 'WARNING':
+          return AppColors.warning;
+        case 'INFO':
+          return AppColors.success;
+        default:
+          return Theme.of(context).hintColor;
+      }
+    }
+
+    IconData levelIcon(String level) {
+      switch (level) {
+        case 'ERROR':
+          return Icons.error_outline_rounded;
+        case 'WARNING':
+          return Icons.warning_amber_rounded;
+        case 'INFO':
+          return Icons.info_outline_rounded;
+        default:
+          return Icons.bug_report_outlined;
+      }
+    }
 
     return Scaffold(
       backgroundColor: isDark ? Colors.black : const Color(0xFFF2F2F7),
@@ -18,6 +45,14 @@ class LogView extends StatelessWidget {
         backgroundColor: isDark ? Colors.black : const Color(0xFFF2F2F7),
         title: Text('Logs', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
         actions: [
+          Obx(() => FilterChip(
+            label: Text(showAll.value ? 'All' : 'Errors'),
+            labelStyle: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600),
+            selected: showAll.value,
+            onSelected: (v) => showAll.value = v,
+            visualDensity: VisualDensity.compact,
+          )),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: 'Share logs',
             icon: Icon(Icons.ios_share_rounded, size: 20, color: isDark ? const Color(0xFF0A84FF) : AppColors.primary),
@@ -34,8 +69,8 @@ class LogView extends StatelessWidget {
         ],
       ),
       body: Obx(() {
-        final important = logs.importantEntries;
-        if (important.isEmpty) {
+        final entries = showAll.value ? logs.entries : logs.importantEntries;
+        if (entries.isEmpty) {
           return Center(
             child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
               Container(
@@ -49,18 +84,17 @@ class LogView extends StatelessWidget {
               const SizedBox(height: 16),
               Text('All Clear', style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black)),
               const SizedBox(height: 6),
-              Text('Errors and warnings will appear here.', style: GoogleFonts.inter(fontSize: 15, color: Theme.of(context).hintColor)),
+              Text(showAll.value ? 'No logs captured yet.' : 'Errors and warnings will appear here.', style: GoogleFonts.inter(fontSize: 15, color: Theme.of(context).hintColor)),
             ]),
           );
         }
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: important.length,
+          itemCount: entries.length,
           itemBuilder: (context, index) {
-            final entry = important[index];
-            final isError = entry.level == 'ERROR';
-            final color = isError ? AppColors.error : AppColors.warning;
+            final entry = entries[index];
+            final color = levelColor(entry.level);
 
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
@@ -74,7 +108,7 @@ class LogView extends StatelessWidget {
                   Container(
                     width: 24, height: 24,
                     decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
-                    child: Icon(isError ? Icons.error_outline_rounded : Icons.warning_amber_rounded, color: color, size: 14),
+                    child: Icon(levelIcon(entry.level), color: color, size: 14),
                   ),
                   const SizedBox(width: 8),
                   Text(entry.level, style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: color)),

@@ -157,6 +157,11 @@ class InferenceService extends GetxService {
         gpuName.value = '';
         gpuLayersUsed.value = 0;
         isGpuAccelerated.value = false;
+        Get.find<AppLogService>().error(
+          'Local model load failed',
+          details:
+              'model=$requestedModelName, runtime=$runtime, backend=${result.backend}, message=${result.message}',
+        );
         return result.message;
       }
 

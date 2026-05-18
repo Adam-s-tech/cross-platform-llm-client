@@ -80,6 +80,13 @@ class ImageGenerationNotificationService {
       await service.startService();
     }
     service.invoke('progress', {'content': details});
+    await _showProgress(
+      title: 'Image generation running',
+      body: '0% · Step 0 of $steps',
+      progress: 0,
+      maxProgress: steps <= 0 ? 100 : steps,
+      indeterminate: steps <= 0,
+    );
   }
 
   Future<void> update({
@@ -96,11 +103,25 @@ class ImageGenerationNotificationService {
         ? '$percent% · Step $step of $total$elapsed$eta'
         : 'Working$elapsed';
     FlutterBackgroundService().invoke('progress', {'content': body});
+    await _showProgress(
+      title: 'Image generation running',
+      body: body,
+      progress: total > 0 ? step.clamp(0, total).toInt() : 0,
+      maxProgress: total <= 0 ? 100 : total,
+      indeterminate: total <= 0,
+    );
   }
 
   Future<void> decoding() async {
     if (!Platform.isAndroid) return;
     FlutterBackgroundService().invoke('progress', {'content': 'Decoding image...'});
+    await _showProgress(
+      title: 'Finishing image',
+      body: 'Decoding image...',
+      progress: 100,
+      maxProgress: 100,
+      indeterminate: true,
+    );
   }
 
   Future<void> complete({required int durationMs}) async {
@@ -146,7 +167,38 @@ class ImageGenerationNotificationService {
   Future<void> cancel() async {
     if (!Platform.isAndroid) return;
     await _notifications.cancel(_progressNotificationId);
+    await _notifications.cancel(_foregroundNotificationId);
     FlutterBackgroundService().invoke('stopService');
+  }
+
+  Future<void> _showProgress({
+    required String title,
+    required String body,
+    required int progress,
+    required int maxProgress,
+    required bool indeterminate,
+  }) async {
+    await _notifications.show(
+      _foregroundNotificationId,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          _channelName,
+          channelDescription: 'Progress updates for local image generation',
+          importance: Importance.low,
+          priority: Priority.low,
+          ongoing: true,
+          autoCancel: false,
+          onlyAlertOnce: true,
+          showProgress: true,
+          maxProgress: maxProgress,
+          progress: progress,
+          indeterminate: indeterminate,
+        ),
+      ),
+    );
   }
 
   String _formatEta(int seconds) {

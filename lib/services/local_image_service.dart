@@ -6,6 +6,7 @@ import 'package:image/image.dart' as img;
 import 'package:sd_flutter_android/sd_flutter_android.dart';
 import '../core/constants.dart';
 import '../ffi/sd_ffi_bindings.dart';
+import 'app_log_service.dart';
 import 'hive_service.dart';
 import 'sd_isolate_processor.dart';
 
@@ -248,10 +249,18 @@ class LocalImageService extends GetxService {
 
       isModelLoaded.value = false;
       isLoadingModel.value = false;
+      Get.find<AppLogService>().error(
+        'Image model load failed',
+        details:
+            'All backend candidates failed. model=${modelName ?? modelPath.split('/').last}, vendor=$vendor, sizeMb=$modelSizeMb',
+      );
       return 'Could not load this model. Try CyberRealistic, Realistic Vision, or AbsoluteReality - these work reliably on most devices.\n\nTechnical detail: All backend candidates failed.';
     } catch (e) {
       isModelLoaded.value = false;
       isLoadingModel.value = false;
+      Get.find<AppLogService>().error('Image model load exception',
+          details:
+              'model=${modelName ?? modelPath.split('/').last}, error=$e');
       return 'Could not load this model. Try CyberRealistic, Realistic Vision, or AbsoluteReality - these work reliably on most devices.\n\nTechnical detail: $e';
     }
   }
@@ -357,6 +366,11 @@ class LocalImageService extends GetxService {
 
       if (result.error != null || result.rgbBytes == null) {
         print('[LocalImageService] Generation failed: ${result.error}');
+        Get.find<AppLogService>().error(
+          'Local image generation failed',
+          details:
+              'backend=${currentBackend.value.displayName}, model=${loadedModelName.value}, error=${result.error ?? "empty image bytes"}',
+        );
         isGenerating.value = false;
         return null;
       }
@@ -382,6 +396,9 @@ class LocalImageService extends GetxService {
       isGenerating.value = false;
       print('[LocalImageService] Native Generation Error: $e');
       print('[LocalImageService] Stack: $stack');
+      Get.find<AppLogService>().error('Local image generation exception',
+          details:
+              'backend=${currentBackend.value.displayName}, model=${loadedModelName.value}, error=$e');
       return null;
     }
   }

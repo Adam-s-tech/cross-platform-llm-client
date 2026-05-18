@@ -542,6 +542,51 @@ class SettingsView extends GetView<SettingsController> {
       ),
       const Divider(height: 1, indent: 16, endIndent: 16),
       Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.shield_outlined,
+                size: 16,
+                color: isDark ? const Color(0xFF0A84FF) : AppColors.primary),
+            const SizedBox(width: 8),
+            Text('GPU Guard',
+                style: GoogleFonts.inter(
+                    fontSize: 15, fontWeight: FontWeight.w400)),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                  color: (isDark ? const Color(0xFF0A84FF) : AppColors.primary)
+                      .withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6)),
+              child: Text(
+                  controller.imageGenGpuGuardMb.value <= 0
+                      ? 'Off'
+                      : '${controller.imageGenGpuGuardMb.value} MB',
+                  style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color:
+                          isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ]),
+          Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('Force CPU when model is bigger than this',
+                  style: GoogleFonts.inter(
+                      fontSize: 12, color: Theme.of(context).hintColor))),
+          Slider(
+              value:
+                  controller.imageGenGpuGuardMb.value.toDouble().clamp(0, 4096),
+              min: 0,
+              max: 4096,
+              divisions: 16,
+              activeColor: isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+              onChanged: (v) => controller.setImageGenGpuGuardMb(v.toInt())),
+        ]),
+      ),
+      const Divider(height: 1, indent: 16, endIndent: 16),
+      Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
         child: Row(children: [
           _iconBox(
@@ -597,7 +642,7 @@ class SettingsView extends GetView<SettingsController> {
     const max = 1.4;
     final accent = isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
 
-    String _scaleLabel(double v) {
+    String scaleLabel(double v) {
       if (v <= 0.85) return 'XS';
       if (v <= 0.95) return 'Small';
       if (v <= 1.05) return 'Recommended';
@@ -622,7 +667,7 @@ class SettingsView extends GetView<SettingsController> {
               decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(6)),
-              child: Text(_scaleLabel(controller.fontScale.value),
+              child: Text(scaleLabel(controller.fontScale.value),
                   style: GoogleFonts.inter(
                       fontSize: 13,
                       color: accent,

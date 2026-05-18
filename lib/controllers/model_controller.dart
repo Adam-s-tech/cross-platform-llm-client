@@ -141,7 +141,9 @@ class ModelController extends GetxController {
 
   Future<void> refreshDownloaded() async {
     await _deletePartialImports();
-    final files = await _download.getDownloadedModels();
+    final files = (await _download.getDownloadedModels())
+        .where((file) => !_isAuxiliaryImageFile(file))
+        .toList();
     downloadedFiles.value = files;
     for (final file in files) {
       fileSizes[file] = await _download.getModelSize(file);
@@ -186,6 +188,26 @@ class ModelController extends GetxController {
   }
 
   bool isDownloaded(String filename) => downloadedFiles.contains(filename);
+
+  bool _isAuxiliaryImageFile(String filename) {
+    final lower = filename.toLowerCase();
+    return lower == 'taesd.safetensors' ||
+        lower.startsWith('taesd-') ||
+        lower.startsWith('taesd_') ||
+        lower == 'diffusion_pytorch_model.safetensors' ||
+        lower.endsWith('.vae.safetensors') ||
+        lower.startsWith('vae-') ||
+        lower.startsWith('vae_');
+  }
+
+  bool _isIncompleteCatalogFile(AiModel model, int fileBytes) {
+    if (model.url.trim().isEmpty || model.isImported || fileBytes <= 0) {
+      return false;
+    }
+    final expectedBytes = _declaredModelBytes(model);
+    if (expectedBytes <= 0) return false;
+    return fileBytes < (expectedBytes * 0.8).round();
+  }
 
   bool get isDownloading => _download.isDownloadingAny;
 
@@ -257,6 +279,10 @@ class ModelController extends GetxController {
   int _knownModelBytes(AiModel model) {
     final detected = fileSizes[model.filename] ?? 0;
     if (detected > 0) return detected;
+    return _declaredModelBytes(model);
+  }
+
+  int _declaredModelBytes(AiModel model) {
     final match = RegExp(r'([\d.]+)\s*(GB|MB)', caseSensitive: false)
         .firstMatch(model.size);
     if (match == null) return 0;
@@ -472,6 +498,14 @@ class ModelController extends GetxController {
     final path = await _download.modelPath(filename);
     final model =
         availableModels.firstWhereOrNull((m) => m.filename == filename);
+    if (_isAuxiliaryImageFile(filename)) {
+      Get.snackbar(
+        'Helper File',
+        '$filename is used internally by image generation and cannot be loaded as a model.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
     final isLiteRt = filename.toLowerCase().endsWith('.litertlm') ||
         model?.runtime == AiModel.runtimeLiteRt;
     final targetRuntime =
@@ -484,6 +518,21 @@ class ModelController extends GetxController {
       return;
     }
     final fileBytes = await _modelFileBytes(filename, path, model);
+    if (model != null && _isIncompleteCatalogFile(model, fileBytes)) {
+      final actual = DownloadService.formatBytes(fileBytes);
+      Get.find<AppLogService>().error(
+        'Incomplete model file blocked',
+        details:
+            '$filename is $actual, expected about ${model.size}',
+      );
+      Get.snackbar(
+        'Incomplete Model File',
+        '$filename is only $actual. Delete it and download again.',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 6),
+      );
+      return;
+    }
     final loadAction = await _confirmModelLoadSafety(
       filename: filename,
       fileBytes: fileBytes,

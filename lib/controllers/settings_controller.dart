@@ -45,10 +45,11 @@ class SettingsController extends GetxController {
   final maxTokens = 512.obs;
   final contextSize = 2048.obs;
   final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
-  final imageSteps = 4.obs;
-  final imageGenForceCpu = false.obs;
+  final imageSteps = 1.obs;
+  final imageGenForceCpu = AppConstants.defaultImageGenForceCpu.obs;
   final imageGenBackend = Backend.cpu.obs;
   final imageGpuVendor = 'detecting'.obs;
+  final imageGenGpuGuardMb = AppConstants.defaultImageGenGpuGuardMb.obs;
   final fontScale = AppConstants.defaultFontScale.obs;
 
   // Persistent text controllers for settings fields
@@ -183,9 +184,14 @@ class SettingsController extends GetxController {
     imageSteps.value = _hive.getSetting(AppConstants.keyImageSteps,
             defaultValue: AppConstants.defaultImageSteps) ??
         AppConstants.defaultImageSteps;
-    imageGenForceCpu.value = _hive.getSetting(AppConstants.keyImageGenForceCpu,
-            defaultValue: false) ??
-        false;
+    imageGenForceCpu.value = _hive.getSetting(
+            AppConstants.keyImageGenForceCpu,
+            defaultValue: AppConstants.defaultImageGenForceCpu) ??
+        AppConstants.defaultImageGenForceCpu;
+    imageGenGpuGuardMb.value = _hive.getSetting(
+            AppConstants.keyImageGenGpuGuardMb,
+            defaultValue: AppConstants.defaultImageGenGpuGuardMb) ??
+        AppConstants.defaultImageGenGpuGuardMb;
     final savedImageBackend = _hive.getSetting<int>(
         AppConstants.keyImageGenBackend,
         defaultValue: Backend.cpu.index);
@@ -561,6 +567,11 @@ class SettingsController extends GetxController {
   Future<void> setImageGenForceCpu(bool value) async {
     imageGenForceCpu.value = value;
     await _hive.setSetting(AppConstants.keyImageGenForceCpu, value);
+  }
+
+  Future<void> setImageGenGpuGuardMb(int value) async {
+    imageGenGpuGuardMb.value = value;
+    await _hive.setSetting(AppConstants.keyImageGenGpuGuardMb, value);
   }
 
   Future<void> _detectImageGpu() async {

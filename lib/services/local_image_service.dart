@@ -172,18 +172,23 @@ class LocalImageService extends GetxService {
         }
       }
 
-      final forceCpu = _hive.getSetting<bool>(AppConstants.keyImageGenForceCpu,
-              defaultValue: false) ??
-          false;
+      final forceCpu = _hive.getSetting<bool>(
+              AppConstants.keyImageGenForceCpu,
+              defaultValue: AppConstants.defaultImageGenForceCpu) ??
+          AppConstants.defaultImageGenForceCpu;
       if (forceCpu) {
         useGpu = false;
         print('[LocalImageService] User override - forcing CPU');
       }
 
-      if (useGpu && vendor == 'adreno' && modelSizeMb >= 1536) {
+      final gpuGuardMb = _hive.getSetting<int>(
+              AppConstants.keyImageGenGpuGuardMb,
+              defaultValue: AppConstants.defaultImageGenGpuGuardMb) ??
+          AppConstants.defaultImageGenGpuGuardMb;
+      if (useGpu && gpuGuardMb > 0 && modelSizeMb >= gpuGuardMb) {
         useGpu = false;
         print(
-            '[LocalImageService] Large FP16 image model detected (${modelSizeMb}MB) on Adreno; using CPU for stability');
+            '[LocalImageService] Model ${modelSizeMb}MB exceeds GPU guard ${gpuGuardMb}MB; using CPU for mobile stability');
       }
 
       final requestedBackend = currentBackend.value;
@@ -329,17 +334,13 @@ class LocalImageService extends GetxService {
         latestLog.value = log.message;
       });
 
-      final result = await _processor!
-          .generate(
+      final result = await _processor!.generate(
         prompt: prompt,
         width: imageSize,
         height: imageSize,
         steps: effectiveSteps,
         // Future: expose width, height, seed, cfg, negativePrompt, sampleMethod from settings
-      )
-          .timeout(const Duration(minutes: 5), onTimeout: () {
-        return GenerationResult(error: 'Generation timed out');
-      });
+      );
 
       await progressSub.cancel();
       await logSub.cancel();

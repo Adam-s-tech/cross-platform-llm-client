@@ -530,7 +530,7 @@ class ChatView extends GetView<ChatController> {
                         color: const Color(0xFFFF3B30).withValues(alpha: 0.3)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    _PulsingDot(),
+                    const _PulsingDot(),
                     const SizedBox(width: 8),
                     Text('Listening… tap mic to stop',
                         style: GoogleFonts.inter(
@@ -538,6 +538,56 @@ class ChatView extends GetView<ChatController> {
                             color: const Color(0xFFFF3B30),
                             fontWeight: FontWeight.w500)),
                   ]),
+                ),
+              );
+            }),
+            Obx(() {
+              final settings = Get.find<SettingsController>();
+              final localImage = Get.find<LocalImageService>();
+              if (settings.inferenceMode.value != 'local' ||
+                  !localImage.isModelLoaded.value) {
+                return const SizedBox.shrink();
+              }
+              final steps = settings.imageSteps.value;
+              final backend = localImage.currentBackend.value;
+              final backendLabel = backend == Backend.cpu
+                  ? 'CPU'
+                  : backend.displayName.split(' ').first.toUpperCase();
+              final accent = backend == Backend.cpu
+                  ? const Color(0xFFFF9500)
+                  : const Color(0xFF34C759);
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: accent.withValues(alpha: 0.24),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.auto_awesome_rounded,
+                            size: 13, color: accent),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Image gen · $steps ${steps == 1 ? "step" : "steps"} · $backendLabel',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: accent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               );
             }),

@@ -58,6 +58,7 @@ class AppConstants {
   static const String keyImageGenForceCpu = 'image_gen_force_cpu';
   static const String keyImageGenBackend = 'image_gen_backend';
   static const String keyImageGenGpuGuardMb = 'image_gen_gpu_guard_mb';
+  static const String keyImageGenSize = 'image_gen_size';
   static const String keyImageGenQuantization = 'image_gen_quantization';
   static const String keyFontScale = 'font_scale';
 
@@ -68,7 +69,8 @@ class AppConstants {
   static const String defaultLiteRtPerformanceMode = 'auto_fast';
   static const int defaultImageSteps = 1;
   static const bool defaultImageGenForceCpu = true;
-  static const int defaultImageGenGpuGuardMb = 1536;
+  static const int defaultImageGenGpuGuardMb = 1843; // 1.8 GB
+  static const int defaultImageGenSize = 0; // 0 = Auto recommended
   static const double defaultFontScale = 1.0; // "Recommended" default
 
   // System Prompt (compact for small context models)

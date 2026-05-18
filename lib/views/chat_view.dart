@@ -549,6 +549,8 @@ class ChatView extends GetView<ChatController> {
                 return const SizedBox.shrink();
               }
               final steps = settings.imageSteps.value;
+              final size = settings.imageGenSize.value;
+              final sizeLabel = size == 0 ? 'Auto' : '${size}px';
               final backend = localImage.currentBackend.value;
               final backendLabel = backend == Backend.cpu
                   ? 'CPU'
@@ -578,7 +580,7 @@ class ChatView extends GetView<ChatController> {
                             size: 13, color: accent),
                         const SizedBox(width: 6),
                         Text(
-                          'Image gen · $steps ${steps == 1 ? "step" : "steps"} · $backendLabel',
+                          'Image gen · $steps ${steps == 1 ? "step" : "steps"} · $sizeLabel · $backendLabel',
                           style: GoogleFonts.inter(
                             fontSize: 11,
                             color: accent,

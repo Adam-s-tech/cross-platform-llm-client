@@ -188,7 +188,7 @@ class LocalImageService extends GetxService {
       if (useGpu && gpuGuardMb > 0 && modelSizeMb >= gpuGuardMb) {
         useGpu = false;
         print(
-            '[LocalImageService] Model ${modelSizeMb}MB exceeds GPU guard ${gpuGuardMb}MB; using CPU for mobile stability');
+            '[LocalImageService] Model ${modelSizeMb}MB exceeds GPU safety ${gpuGuardMb}MB; using CPU for mobile stability');
       }
 
       final requestedBackend = currentBackend.value;
@@ -316,12 +316,19 @@ class LocalImageService extends GetxService {
         }
       }
 
-      final imageSize = currentBackend.value == Backend.cpu
+      final selectedImageSize = _hive.getSetting<int>(
+              AppConstants.keyImageGenSize,
+              defaultValue: AppConstants.defaultImageGenSize) ??
+          AppConstants.defaultImageGenSize;
+      final autoImageSize = currentBackend.value == Backend.cpu
           ? (availableRamMb > 0 && availableRamMb < 1800 ? 320 : 384)
           : (availableRamMb > 0 && availableRamMb < 1800 ? 256 : 320);
+      final imageSize = selectedImageSize == 0
+          ? autoImageSize
+          : selectedImageSize.clamp(256, 512).toInt();
 
       print(
-          '[LocalImageService] generateImage start: prompt="$prompt", backend=${currentBackend.value.displayName}, size=${imageSize}x$imageSize, steps=$effectiveSteps, availableRam=${availableRamMb}MB');
+          '[LocalImageService] generateImage start: prompt="$prompt", backend=${currentBackend.value.displayName}, size=${imageSize}x$imageSize, steps=$effectiveSteps, availableRam=${availableRamMb}MB, sizeMode=${selectedImageSize == 0 ? "auto" : "fixed"}');
 
       // Subscribe to progress and log streams
       progressSub = _processor!.progressStream.listen((update) {

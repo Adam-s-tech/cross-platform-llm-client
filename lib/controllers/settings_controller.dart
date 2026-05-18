@@ -50,6 +50,7 @@ class SettingsController extends GetxController {
   final imageGenBackend = Backend.cpu.obs;
   final imageGpuVendor = 'detecting'.obs;
   final imageGenGpuGuardMb = AppConstants.defaultImageGenGpuGuardMb.obs;
+  final imageGenSize = AppConstants.defaultImageGenSize.obs;
   final fontScale = AppConstants.defaultFontScale.obs;
 
   // Persistent text controllers for settings fields
@@ -192,6 +193,9 @@ class SettingsController extends GetxController {
             AppConstants.keyImageGenGpuGuardMb,
             defaultValue: AppConstants.defaultImageGenGpuGuardMb) ??
         AppConstants.defaultImageGenGpuGuardMb;
+    imageGenSize.value = _hive.getSetting(AppConstants.keyImageGenSize,
+            defaultValue: AppConstants.defaultImageGenSize) ??
+        AppConstants.defaultImageGenSize;
     final savedImageBackend = _hive.getSetting<int>(
         AppConstants.keyImageGenBackend,
         defaultValue: Backend.cpu.index);
@@ -572,6 +576,14 @@ class SettingsController extends GetxController {
   Future<void> setImageGenGpuGuardMb(int value) async {
     imageGenGpuGuardMb.value = value;
     await _hive.setSetting(AppConstants.keyImageGenGpuGuardMb, value);
+  }
+
+  Future<void> setImageGenSize(int value) async {
+    final allowed =
+        value == 0 || value == 256 || value == 320 || value == 384 || value == 512;
+    final normalized = allowed ? value : AppConstants.defaultImageGenSize;
+    imageGenSize.value = normalized;
+    await _hive.setSetting(AppConstants.keyImageGenSize, normalized);
   }
 
   Future<void> _detectImageGpu() async {

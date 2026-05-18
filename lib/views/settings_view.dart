@@ -542,6 +542,101 @@ class SettingsView extends GetView<SettingsController> {
       ),
       const Divider(height: 1, indent: 16, endIndent: 16),
       Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.photo_size_select_large_rounded,
+                size: 16,
+                color: isDark ? const Color(0xFF0A84FF) : AppColors.primary),
+            const SizedBox(width: 8),
+            Text('Image Size',
+                style: GoogleFonts.inter(
+                    fontSize: 15, fontWeight: FontWeight.w400)),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                  color: (isDark ? const Color(0xFF0A84FF) : AppColors.primary)
+                      .withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6)),
+              child: Text(
+                  controller.imageGenSize.value == 0
+                      ? 'Auto'
+                      : '${controller.imageGenSize.value}px',
+                  style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color:
+                          isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ]),
+          Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 10),
+              child: Text(
+                  'Auto recommended. Bigger size = better detail, but much slower and more memory use.',
+                  style: GoogleFonts.inter(
+                      fontSize: 12, color: Theme.of(context).hintColor))),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final option in const [
+                (value: 0, label: 'Auto'),
+                (value: 256, label: '256'),
+                (value: 320, label: '320'),
+                (value: 384, label: '384'),
+                (value: 512, label: '512'),
+              ])
+                ChoiceChip(
+                  label: Text(option.label),
+                  selected: controller.imageGenSize.value == option.value,
+                  onSelected: (_) => controller.setImageGenSize(option.value),
+                  visualDensity: VisualDensity.compact,
+                  labelStyle: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: controller.imageGenSize.value == option.value
+                        ? Colors.white
+                        : Theme.of(context).hintColor,
+                  ),
+                  selectedColor:
+                      isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+                  backgroundColor: isDark
+                      ? Colors.white.withValues(alpha: 0.06)
+                      : Colors.black.withValues(alpha: 0.04),
+                  side: BorderSide(
+                    color: controller.imageGenSize.value == option.value
+                        ? Colors.transparent
+                        : Theme.of(context).dividerColor.withValues(alpha: 0.3),
+                  ),
+                  showCheckmark: false,
+                ),
+            ],
+          ),
+          if (controller.imageGenSize.value >= 512)
+            Container(
+                margin: const EdgeInsets.only(top: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8)),
+                child: Row(children: [
+                  Icon(Icons.warning_amber_rounded,
+                      size: 14, color: AppColors.warning),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: Text(
+                          '512 gives more detail but can be MUCH slower, heat the phone, and may fail on some devices.',
+                          style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: AppColors.warning,
+                              fontWeight: FontWeight.w400))),
+                ])),
+        ]),
+      ),
+      const Divider(height: 1, indent: 16, endIndent: 16),
+      Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
@@ -549,7 +644,7 @@ class SettingsView extends GetView<SettingsController> {
                 size: 16,
                 color: isDark ? const Color(0xFF0A84FF) : AppColors.primary),
             const SizedBox(width: 8),
-            Text('GPU Guard',
+            Text('GPU Safety',
                 style: GoogleFonts.inter(
                     fontSize: 15, fontWeight: FontWeight.w400)),
             const Spacer(),
@@ -572,7 +667,8 @@ class SettingsView extends GetView<SettingsController> {
           ]),
           Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text('Force CPU when model is bigger than this',
+              child: Text(
+                  'Models at or above this size use CPU. Smaller models can use GPU Experimental.',
                   style: GoogleFonts.inter(
                       fontSize: 12, color: Theme.of(context).hintColor))),
           Slider(
@@ -583,55 +679,101 @@ class SettingsView extends GetView<SettingsController> {
               divisions: 16,
               activeColor: isDark ? const Color(0xFF0A84FF) : AppColors.primary,
               onChanged: (v) => controller.setImageGenGpuGuardMb(v.toInt())),
+          if (controller.imageGenGpuGuardMb.value <= 0 ||
+              controller.imageGenGpuGuardMb.value >= 2048)
+            Container(
+                margin: const EdgeInsets.only(top: 2, bottom: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8)),
+                child: Row(children: [
+                  Icon(Icons.warning_amber_rounded,
+                      size: 14, color: AppColors.warning),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: Text(
+                          controller.imageGenGpuGuardMb.value <= 0
+                              ? 'GPU Safety is off. Large models may crash or freeze on GPU.'
+                              : 'High GPU Safety allows larger models on GPU and may crash, freeze, or overheat some phones.',
+                          style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: AppColors.warning,
+                              fontWeight: FontWeight.w400))),
+                ])),
         ]),
       ),
       const Divider(height: 1, indent: 16, endIndent: 16),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-        child: Row(children: [
-          _iconBox(
-              isDark ? const Color(0xFF0A84FF) : AppColors.primary,
-              selectedBackend == Backend.cpu
-                  ? Icons.memory_rounded
-                  : Icons.bolt_rounded),
-          const SizedBox(width: 14),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Image Backend',
-                  style: GoogleFonts.inter(
-                      fontSize: 15, fontWeight: FontWeight.w400)),
-              const SizedBox(height: 3),
-              Text(controller.imageGpuLabel(),
-                  style: GoogleFonts.inter(
-                      fontSize: 12, color: Theme.of(context).hintColor)),
-            ]),
-          ),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(
-                  value: false,
-                  icon: Icon(Icons.memory_rounded, size: 16),
-                  label: Text('CPU')),
-              ButtonSegment(
-                  value: true,
-                  icon: Icon(Icons.bolt_rounded, size: 16),
-                  label: Text('GPU')),
-            ],
-            selected: {selectedBackend != Backend.cpu},
-            onSelectionChanged: (values) {
-              final useGpu = values.first;
-              if (useGpu && !gpuAvailable) return;
-              controller.setImageBackendMode(useGpu);
-            },
-            showSelectedIcon: false,
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              textStyle: WidgetStatePropertyAll(
-                  GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            _iconBox(
+                isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+                selectedBackend == Backend.cpu
+                    ? Icons.memory_rounded
+                    : Icons.bolt_rounded),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Image Backend',
+                        style: GoogleFonts.inter(
+                            fontSize: 15, fontWeight: FontWeight.w400)),
+                    const SizedBox(height: 3),
+                    Text(controller.imageGpuLabel(),
+                        style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: Theme.of(context).hintColor)),
+                  ]),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: SegmentedButton<bool>(
+              segments: [
+                const ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.memory_rounded, size: 16),
+                    label: Text('CPU')),
+                ButtonSegment(
+                    value: true,
+                    icon: const Icon(Icons.bolt_rounded, size: 16),
+                    label: Text(
+                      'GPU',
+                      style: TextStyle(
+                        color: selectedBackend == Backend.cpu
+                            ? const Color(0xFFFF6B6B)
+                            : Colors.white,
+                      ),
+                    )),
+              ],
+              selected: {selectedBackend != Backend.cpu},
+              onSelectionChanged: (values) {
+                final useGpu = values.first;
+                if (useGpu && !gpuAvailable) return;
+                controller.setImageBackendMode(useGpu);
+              },
+              showSelectedIcon: false,
+              style: ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: WidgetStatePropertyAll(GoogleFonts.inter(
+                    fontSize: 12, fontWeight: FontWeight.w500)),
+              ),
             ),
           ),
+          if (selectedBackend != Backend.cpu) ...[
+            const SizedBox(height: 6),
+            Text('GPU is experimental and only used below GPU Safety size.',
+                style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: const Color(0xFFFF6B6B),
+                    fontWeight: FontWeight.w500)),
+          ],
         ]),
       ),
     ]);

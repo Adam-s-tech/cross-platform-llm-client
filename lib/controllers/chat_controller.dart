@@ -15,11 +15,13 @@ import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../ffi/sd_ffi_bindings.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
 import '../services/cloud_service.dart';
 import '../services/local_image_service.dart';
 import '../services/app_log_service.dart';
+import '../services/image_generation_notification_service.dart';
 import '../services/document_extractor_service.dart';
 import '../utils/thought_parser.dart';
 
@@ -566,14 +568,32 @@ class ChatController extends GetxController {
 
         if (localImage.isModelLoaded.value) {
           // Local image generation
+          final settings = Get.find<SettingsController>();
+          final imageNotifications =
+              Get.find<ImageGenerationNotificationService>();
           final steps = _hive.getSetting<int>(AppConstants.keyImageSteps,
               defaultValue: AppConstants.defaultImageSteps) ??
               AppConstants.defaultImageSteps;
+          final sizeSetting = settings.imageGenSize.value;
+          final sizeLabel =
+              sizeSetting == 0 ? 'Auto size' : '${sizeSetting}x$sizeSetting';
+          final backendLabel = localImage.currentBackend.value == Backend.cpu
+              ? 'CPU'
+              : localImage.currentBackend.value.displayName
+                  .split(' ')
+                  .first
+                  .toUpperCase();
           imageGenStep.value = 0;
           imageGenTotal.value = steps;
           imageGenEstimatedSecs.value = 0;
           imageGenStartTime.value = DateTime.now();
           imageGenDecoding.value = false;
+          await imageNotifications.start(
+            modelName: localImage.loadedModelName.value,
+            backend: backendLabel,
+            steps: steps,
+            sizeLabel: sizeLabel,
+          );
           print('[ChatController] Starting image generation for: $text');
           final pngBytes = await localImage.generateImage(
             prompt: text,
@@ -584,6 +604,7 @@ class ChatController extends GetxController {
               if (step >= total && total > 0) {
                 imageGenDecoding.value = true;
                 print('[ChatController] Sampling complete, VAE decode in progress');
+                imageNotifications.decoding();
               }
               if (step > 0 && total > 0 && step < total) {
                 final start = imageGenStartTime.value;
@@ -595,6 +616,16 @@ class ChatController extends GetxController {
                       (avgMsPerStep * remainingSteps / 1000).ceil();
                 }
               }
+              imageNotifications.update(
+                step: step,
+                total: total,
+                etaSeconds: imageGenEstimatedSecs.value,
+                elapsedSeconds: imageGenStartTime.value == null
+                    ? 0
+                    : DateTime.now()
+                        .difference(imageGenStartTime.value!)
+                        .inSeconds,
+              );
               _scrollToBottom();
             },
           );
@@ -605,8 +636,10 @@ class ChatController extends GetxController {
           print('[ChatController] generateImage returned, bytes=${pngBytes?.length}, duration=${genDurationMs}ms');
 
           if (pngBytes != null) {
+            await imageNotifications.complete(durationMs: genDurationMs ?? 0);
             rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
           } else {
+            await imageNotifications.failed();
             rawResponse = '❌ Local image generation failed.';
           }
         } else {
@@ -689,6 +722,7 @@ class ChatController extends GetxController {
       );
       messages.add(aiMsg);
       _hive.saveMessage(aiMsg.id, aiMsg.toMap());
+      imageGenStartTime.value = null;
 
       // Update session
       final session =
@@ -707,6 +741,10 @@ class ChatController extends GetxController {
       imageGenStep.value = 0;
       imageGenTotal.value = 0;
       imageGenDecoding.value = false;
+      if (imageGenStartTime.value != null) {
+        await Get.find<ImageGenerationNotificationService>().failed();
+      }
+      imageGenStartTime.value = null;
       Get.find<AppLogService>().error('Chat response failed', details: e);
       final errorMsg = ChatMessage(
         id: _uuid.v4(),
@@ -739,6 +777,7 @@ class ChatController extends GetxController {
     isStreaming.value = false;
     streamingAttachmentType.value = null;
     streamingResponse.value = '';
+    Get.find<ImageGenerationNotificationService>().cancel();
     imageGenStep.value = 0;
     imageGenTotal.value = 0;
     imageGenEstimatedSecs.value = 0;

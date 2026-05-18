@@ -17,6 +17,7 @@ import 'services/download_service.dart';
 import 'services/device_info_service.dart';
 import 'services/local_image_service.dart';
 import 'services/app_log_service.dart';
+import 'services/image_generation_notification_service.dart';
 import 'core/constants.dart';
 
 void main() async {
@@ -45,6 +46,9 @@ void main() async {
   Get.put(DownloadService());
   Get.put(LocalImageService());
   Get.put(AppLogService());
+  final imageNotifications = Get.put(ImageGenerationNotificationService());
+  await imageNotifications.init();
+  await imageNotifications.configureBackgroundService();
   Get.put(ServerController(), permanent: true);
   Get.put(ModelController());
 

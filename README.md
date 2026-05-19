@@ -5,10 +5,10 @@
 A production-ready, cross-platform AI chat client built with Flutter. It unifies local on-device LLM inference (Android) with cloud API access, giving users full control over how their models run.
 
 ![Image generation tested on Moto G71 (Snapdragon), Oneplus 10r (Mediatek), Pixel 6A (Tensor), Poco F1 (Snapdragon), Samsung s23 (Snapdragon) 4 steps fast](PrivateLM.png)
-*Image generation tested on Moto G71 (Snapdragon), Oneplus 10r (Mediatek), Pixel 6A (Tensor), Poco F1 (Snapdragon), Samsung s23 (Snapdragon) 4 steps fast*
+_Image generation tested on Moto G71 (Snapdragon), Oneplus 10r (Mediatek), Pixel 6A (Tensor), Poco F1 (Snapdragon), Samsung s23 (Snapdragon) 4 steps fast_
 
 ![Generated on pixel 6 with 20 step](IMG_2390.png)
-*Generated on pixel 6 with 20 step*
+_Generated on pixel 6 with 20 step_
 
 ---
 
@@ -27,6 +27,7 @@ A production-ready, cross-platform AI chat client built with Flutter. It unifies
 ## Technical Architecture
 
 ### Stack
+
 - **Framework:** Flutter 3.x (Dart >=3.3.0)
 - **State Management:** GetX
 - **Local Storage:** Hive
@@ -63,6 +64,7 @@ A production-ready, cross-platform AI chat client built with Flutter. It unifies
 ```
 
 ### Local Inference (Android)
+
 The app uses `llama_flutter_android`, a custom Flutter plugin wrapping `llama.cpp` for ARM64 devices. At runtime it:
 
 1. **Detects GPU capabilities** via Vulkan to determine offload layers.
@@ -74,7 +76,9 @@ The app uses `llama_flutter_android`, a custom Flutter plugin wrapping `llama.cp
 Idle detection (5s) and hard timeouts (180s) keep the UX responsive even on underpowered hardware.
 
 ### Cloud Inference
+
 `CloudService` normalizes four different API shapes into a single interface:
+
 - **OpenAI** — standard `/v1/chat/completions`
 - **Anthropic** — Messages API with separate system param
 - **Google Gemini** — `generateContent` with inline image base64
@@ -83,7 +87,9 @@ Idle detection (5s) and hard timeouts (180s) keep the UX responsive even on unde
 API keys are stored in Hive and never transmitted anywhere except to the provider's endpoint.
 
 ### Cross-Platform Abstraction
+
 Local inference is conditionally compiled:
+
 - **Android** → `inference_android.dart` (full llama.cpp engine)
 - **Web** → `inference_stub.dart` (cloud-only, local coming soon)
 - **iOS** → `inference_android.dart` (full llama.cpp engine via Metal GPU)
@@ -94,26 +100,29 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 
 ## Supported Platforms
 
-| Platform | Local Inference | Cloud APIs | Notes |
-|----------|----------------|------------|-------|
-| Android  | ✅ Yes         | ✅ Yes     | CPU offload via NEON; minSdk 28 |
-| iOS      | ✅ Yes         | ✅ Yes     | Metal GPU acceleration |
-| Web      | ❌ No          | ✅ Yes     | Cloud-only (local coming soon) |
+| Platform | Local Inference | Cloud APIs | Notes                           |
+| -------- | --------------- | ---------- | ------------------------------- |
+| Android  | ✅ Yes          | ✅ Yes     | CPU offload via NEON; minSdk 28 |
+| iOS      | ✅ Yes          | ✅ Yes     | Metal GPU acceleration          |
+| Web      | ❌ No           | ✅ Yes     | Cloud-only (local coming soon)  |
 
 ### iOS / iPad
-The iPad release is distributed as a standalone ZIP package for sideloading. Download the latest `PrivateLM-iOS.zip` from the [Releases](https://github.com/orailnoor/ai_chat/releases) page, extract it, and install the `.ipa` via AltStore, Sideloadly, or Xcode. iPhone support is experimental — iPad is the recommended iOS target due to RAM requirements for local models.
+
+The iPad release is distributed as a standalone ZIP package for sideloading. Download the latest `PrivateLM-iOS.zip` from the [Releases](https://github.com/orailnoor/cross-platform-llm-client/releases) page, extract it, and install the `.ipa` via AltStore, Sideloadly, or Xcode. iPhone support is experimental — iPad is the recommended iOS target due to RAM requirements for local models.
 
 ---
 
 ## Build Configuration
 
 ### Prerequisites
+
 - Flutter SDK >=3.3.0
 - Android SDK (API 26+)
 - JDK 17
 - NDK (bundled with Android SDK)
 
 ### Android
+
 ```bash
 flutter pub get
 cd android
@@ -121,6 +130,7 @@ cd android
 ```
 
 For release builds you should configure your own signing in `android/app/build.gradle.kts`:
+
 ```kotlin
 buildTypes {
     release {
@@ -136,6 +146,7 @@ buildTypes {
 ```
 
 ### iOS
+
 ```bash
 flutter pub get
 cd ios
@@ -144,6 +155,7 @@ flutter build ios
 ```
 
 ### Web
+
 ```bash
 flutter pub get
 flutter build web --release

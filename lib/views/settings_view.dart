@@ -6,6 +6,7 @@ import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
 import '../core/constants.dart';
 import '../services/inference_service.dart';
+import '../services/hive_service.dart';
 import '../services/local_image_service.dart';
 import '../services/device_info_service.dart';
 import '../services/device_info_native.dart' as platform_info;
@@ -469,20 +470,43 @@ class SettingsView extends GetView<SettingsController> {
         warning: 'Your phone may crash with this value!',
       ),
       _parameterDivider(isDark),
-      _modelParameterSlider(
-        context,
-        isDark,
-        label: 'Context Size',
-        value: controller.contextSize.value.toDouble(),
-        min: 512,
-        max: 8192,
-        divisions: 15,
-        safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
-        onChanged: (v) => controller.setContextSize(v.toInt()),
-        displayValue: controller.contextSize.value.toString(),
-        icon: Icons.memory_rounded,
-        warning: 'Context this large will eat all your RAM!',
-      ),
+      (() {
+        final inference = Get.find<InferenceService>();
+        final savedRuntime = Get.find<HiveService>()
+                .getSetting<String>(AppConstants.keyLocalModelRuntime) ??
+            '';
+        final isLiteRtActive = (inference.isModelLoaded.value &&
+                inference.loadedModelRuntime.value == 'litert') ||
+            (!inference.isModelLoaded.value &&
+                savedRuntime.toLowerCase() == 'litert');
+        final maxContext = isLiteRtActive ? 4096.0 : 8192.0;
+        final divisions = isLiteRtActive ? 7 : 15;
+        final currentValue =
+            controller.contextSize.value.toDouble().clamp(512.0, maxContext);
+
+        if (currentValue != controller.contextSize.value.toDouble()) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            controller.setContextSize(currentValue.toInt());
+          });
+        }
+
+        return _modelParameterSlider(
+          context,
+          isDark,
+          label: 'Context Size',
+          value: currentValue,
+          min: 512,
+          max: maxContext,
+          divisions: divisions,
+          safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
+          onChanged: (v) => controller.setContextSize(v.toInt()),
+          displayValue: currentValue.toInt().toString(),
+          icon: Icons.memory_rounded,
+          warning: isLiteRtActive
+              ? 'Context capped at 4096 to prevent driver memory crash for LiteRT models.'
+              : 'Context this large will eat all your RAM!',
+        );
+      })(),
     ]);
   }
 
@@ -635,7 +659,7 @@ class SettingsView extends GetView<SettingsController> {
                     color: AppColors.warning.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8)),
                 child: Row(children: [
-                  Icon(Icons.warning_amber_rounded,
+                  const Icon(Icons.warning_amber_rounded,
                       size: 14, color: AppColors.warning),
                   const SizedBox(width: 6),
                   Expanded(
@@ -702,7 +726,7 @@ class SettingsView extends GetView<SettingsController> {
                     color: AppColors.warning.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8)),
                 child: Row(children: [
-                  Icon(Icons.warning_amber_rounded,
+                  const Icon(Icons.warning_amber_rounded,
                       size: 14, color: AppColors.warning),
                   const SizedBox(width: 6),
                   Expanded(
@@ -738,8 +762,7 @@ class SettingsView extends GetView<SettingsController> {
                     const SizedBox(height: 3),
                     Text(controller.imageGpuLabel(),
                         style: GoogleFonts.inter(
-                            fontSize: 12,
-                            color: Theme.of(context).hintColor)),
+                            fontSize: 12, color: Theme.of(context).hintColor)),
                   ]),
             ),
           ]),
@@ -912,8 +935,8 @@ class SettingsView extends GetView<SettingsController> {
           Icon(icon, size: 16, color: accent),
           const SizedBox(width: 8),
           Text(label,
-              style: GoogleFonts.inter(
-                  fontSize: 15, fontWeight: FontWeight.w400)),
+              style:
+                  GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400)),
           const Spacer(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -922,9 +945,7 @@ class SettingsView extends GetView<SettingsController> {
                 borderRadius: BorderRadius.circular(6)),
             child: Text(displayValue ?? value.toStringAsFixed(2),
                 style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: accent,
-                    fontWeight: FontWeight.w600)),
+                    fontSize: 13, color: accent, fontWeight: FontWeight.w600)),
           ),
         ]),
         if (safeMax < max)

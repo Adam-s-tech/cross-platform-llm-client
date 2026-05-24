@@ -100,7 +100,7 @@ class ModelController extends GetxController {
   }
 
   String get defaultLocalFilter =>
-      downloadedFiles.length >= 2 ? 'downloaded' : 'general';
+      downloadedFiles.isNotEmpty ? 'downloaded' : 'general';
 
   double get importProgress => importTotalBytes.value <= 0
       ? 0.0
@@ -206,7 +206,9 @@ class ModelController extends GetxController {
     }
     final expectedBytes = _declaredModelBytes(model);
     if (expectedBytes <= 0) return false;
-    return fileBytes < (expectedBytes * 0.95).round();
+    // Relax threshold to 85% to comfortably accommodate HuggingFace decimal-scaled catalog sizes 
+    // and rounded metadata sizes (e.g. 770.3MB listed as 0.8GB) while still blocking failed downloads.
+    return fileBytes < (expectedBytes * 0.85).round();
   }
 
   bool get isDownloading => _download.isDownloadingAny;
@@ -403,42 +405,6 @@ class ModelController extends GetxController {
       importTotalBytes.value = 0;
       importBytesPerSecond.value = 0;
 
-      _androidImportChannel.setMethodCallHandler((call) async {
-        if (call.method != 'importProgress') return;
-        final data = Map<Object?, Object?>.from(call.arguments as Map);
-        importFileName.value = (data['filename'] as String?) ?? '';
-        final status = (data['status'] as String?) ?? 'Downloading...';
-        importStatus.value = status;
-        importCopiedBytes.value =
-            (data['copiedBytes'] as num?)?.toInt() ?? importCopiedBytes.value;
-        importTotalBytes.value =
-            (data['totalBytes'] as num?)?.toInt() ?? importTotalBytes.value;
-        importBytesPerSecond.value =
-            (data['bytesPerSecond'] as num?)?.toDouble() ??
-                importBytesPerSecond.value;
-
-        if (status == 'Download complete' ||
-            status == 'Download failed' ||
-            status == 'Download cancelled') {
-          if (status == 'Download complete') {
-            Get.snackbar(
-              'Saved to Downloads',
-              'Import this file to use it in the app.',
-              snackPosition: SnackPosition.BOTTOM,
-              duration: const Duration(seconds: 5),
-            );
-          }
-          Future.delayed(const Duration(seconds: 3), () {
-            if (importStatus.value == status) {
-              isImporting.value = false;
-              importFileName.value = '';
-              importStatus.value = '';
-              _androidImportChannel.setMethodCallHandler(null);
-            }
-          });
-        }
-      });
-
       final result =
           await _androidImportChannel.invokeMapMethod<String, dynamic>(
         'downloadToDownloads',
@@ -633,40 +599,166 @@ class ModelController extends GetxController {
         enableLiteRtVision: model == null ? false : isVisionModel(model),
       );
       if (_inference.isModelLoaded.value) {
+        final fallbackToText = result.toLowerCase().contains('text-only');
         _inference.isVisionLoaded.value =
-            model == null ? false : isVisionModel(model);
+            fallbackToText ? false : (model == null ? false : isVisionModel(model));
         await _settings.setInferenceMode('local');
         Get.snackbar('Model Loaded', result,
             snackPosition: SnackPosition.BOTTOM);
       } else {
+        bool showDetails = false;
         Get.dialog(
-          AlertDialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Row(
-              children: [
-                Icon(Icons.error_outline),
-                SizedBox(width: 10),
-                Expanded(
-                    child: Text('Model Load Failed',
-                        style: TextStyle(fontWeight: FontWeight.w700))),
-              ],
-            ),
-            content: Text(
-              result,
-              style: const TextStyle(fontSize: 14, height: 1.4),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Get.back(),
-                style: FilledButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+          StatefulBuilder(
+            builder: (context, setState) {
+              final friendlyMsg = _getFriendlyErrorMessage(result);
+              final isDark = Theme.of(context).brightness == Brightness.dark;
+              final detailBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
+              final detailBorder = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+              
+              return AlertDialog(
+                backgroundColor: Theme.of(context).dialogTheme.backgroundColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+                contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+                actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+                title: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.error.withValues(alpha: isDark ? 0.15 : 0.08),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.error_outline_rounded,
+                        color: Theme.of(context).colorScheme.error,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Model Load Failed',
+                        style: GoogleFonts.inter(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                child: const Text('OK',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ],
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        friendlyMsg,
+                        style: GoogleFonts.inter(
+                          fontSize: 14, 
+                          height: 1.5,
+                          color: isDark ? Colors.white70 : Colors.black87,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'TROUBLESHOOTING TIPS',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildTipRow(context, Icons.delete_outline_rounded, 'Delete the model and try redownloading it completely.'),
+                      _buildTipRow(context, Icons.memory_rounded, 'Ensure your device has at least 2-3 GB of free RAM.'),
+                      if (result.toLowerCase().contains('litert') || filename.toLowerCase().endsWith('.litertlm'))
+                        _buildTipRow(context, Icons.settings_suggest_rounded, 'Double check if this LiteRT-LM file matches your architecture.'),
+                      const SizedBox(height: 12),
+
+                      // Technical Details Toggle Button
+                      InkWell(
+                        onTap: () => setState(() => showDetails = !showDetails),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                showDetails ? 'Hide Technical Details' : 'Show Technical Details',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12, 
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                              Icon(
+                                showDetails ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                                size: 16,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
+                        child: showDetails
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    constraints: const BoxConstraints(maxHeight: 180),
+                                    width: double.maxFinite,
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: detailBg,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: detailBorder, width: 1),
+                                    ),
+                                    child: SingleChildScrollView(
+                                      child: SelectableText(
+                                        result,
+                                        style: GoogleFonts.firaCode(
+                                          fontSize: 11,
+                                          height: 1.4,
+                                          color: isDark ? const Color(0xFFFDA4AF) : const Color(0xFF9F1239),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Get.back(),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: Text(
+                      'Close',
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         );
       }
@@ -725,15 +817,17 @@ class ModelController extends GetxController {
     String path,
     AiModel? model,
   ) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        final bytes = await file.length();
+        fileSizes[filename] = bytes;
+        return bytes;
+      }
+    } catch (_) {}
     final cached = fileSizes[filename] ?? 0;
     if (cached > 0) return cached;
-    try {
-      final bytes = await File(path).length();
-      fileSizes[filename] = bytes;
-      return bytes;
-    } catch (_) {
-      return model == null ? 0 : _knownModelBytes(model);
-    }
+    return model == null ? 0 : _knownModelBytes(model);
   }
 
   Future<bool> _hasValidSafetensorsHeader(String path) async {
@@ -765,33 +859,33 @@ class ModelController extends GetxController {
     RandomAccessFile? raf;
     try {
       final file = File(path);
-      final length = fileBytes > 0 ? fileBytes : await file.length();
-      if (length < 50 * 1024 * 1024) return false;
+      if (!await file.exists()) return false;
+      final length = await file.length();
+      if (length < 10 * 1024 * 1024) return false;
 
       raf = await file.open();
-      final bytes = await raf.read(512);
-      if (bytes.length < 16) return false;
+      final bytes = await raf.read(16);
+      if (bytes.length < 8) return false;
 
-      final firstText = String.fromCharCodes(
-        bytes.where((b) => b == 9 || b == 10 || b == 13 || (b >= 32 && b < 127)),
-      ).toLowerCase();
-      if (firstText.contains('<html') ||
-          firstText.contains('<!doctype') ||
-          firstText.contains('version https://git-lfs.github.com/spec') ||
-          firstText.contains('access denied') ||
-          firstText.contains('not found')) {
-        return false;
+      // Verify LiteRT-LM magic identifier 'LITERTLM' at bytes 0-7
+      final hasLmLiteRt = bytes[0] == 0x4C && // 'L'
+          bytes[1] == 0x49 && // 'I'
+          bytes[2] == 0x54 && // 'T'
+          bytes[3] == 0x45 && // 'E'
+          bytes[4] == 0x52 && // 'R'
+          bytes[5] == 0x54 && // 'T'
+          bytes[6] == 0x4C && // 'L'
+          bytes[7] == 0x4D; // 'M'
+
+      if (hasLmLiteRt) {
+        return true;
       }
 
-      if (bytes[0] == 0x7B || bytes[0] == 0x5B) return false;
-      if (bytes.length >= 4 &&
-          bytes[0] == 0x47 &&
-          bytes[1] == 0x47 &&
-          bytes[2] == 0x55 &&
-          bytes[3] == 0x46) {
-        return false;
-      }
-      return true;
+      // Note: We intentionally DO NOT allow standard TFLite models starting with 'TFL3' at offset 4
+      // if they lack the 'LITERTLM' container header, because the native LiteRT-LM engine 
+      // strictly expects the .litertlm conversational bundle structure and will crash with a
+      // SIGABRT native assert check failure if it is not present.
+      return false;
     } catch (_) {
       return false;
     } finally {
@@ -1138,21 +1232,6 @@ class ModelController extends GetxController {
       importTotalBytes.value = 0;
       importBytesPerSecond.value = 0;
 
-      _androidImportChannel.setMethodCallHandler((call) async {
-        if (call.method != 'importProgress') return;
-        final data = Map<Object?, Object?>.from(call.arguments as Map);
-        importFileName.value = (data['filename'] as String?) ?? '';
-        importStatus.value =
-            (data['status'] as String?) ?? 'Copying to app storage...';
-        importCopiedBytes.value =
-            (data['copiedBytes'] as num?)?.toInt() ?? importCopiedBytes.value;
-        importTotalBytes.value =
-            (data['totalBytes'] as num?)?.toInt() ?? importTotalBytes.value;
-        importBytesPerSecond.value =
-            (data['bytesPerSecond'] as num?)?.toDouble() ??
-                importBytesPerSecond.value;
-      });
-
       final result =
           await _androidImportChannel.invokeMapMethod<String, dynamic>(
         'pickAndImportModel',
@@ -1182,7 +1261,6 @@ class ModelController extends GetxController {
           .error('Android model import failed', details: e);
       Get.snackbar('Import Failed', '$e', snackPosition: SnackPosition.BOTTOM);
     } finally {
-      _androidImportChannel.setMethodCallHandler(null);
       isImporting.value = false;
       importFileName.value = '';
       importStatus.value = '';
@@ -1221,19 +1299,86 @@ class ModelController extends GetxController {
 
   Future<bool> _confirmReplace(String filename) async {
     final result = await Get.dialog<bool>(
-      AlertDialog(
-        title: const Text('Model already imported'),
-        content: Text('$filename already exists in app storage. Replace it?'),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(result: false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Get.back(result: true),
-            child: const Text('Replace'),
-          ),
-        ],
+      Builder(
+        builder: (context) {
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          
+          return AlertDialog(
+            backgroundColor: Theme.of(context).dialogTheme.backgroundColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+            contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: isDark ? 0.15 : 0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.copy_all_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Model Already Exists',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: Text(
+              'A model file named "$filename" is already imported in your local app storage. Would you like to replace it?',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                height: 1.5,
+                color: isDark ? Colors.white70 : Colors.black87,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Get.back(result: false),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: Text(
+                  'Cancel',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: () => Get.back(result: true),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                ),
+                child: Text(
+                  'Replace File',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
     return result ?? false;
@@ -1249,5 +1394,66 @@ class ModelController extends GetxController {
         }
       }
     } catch (_) {}
+  }
+
+  String _getFriendlyErrorMessage(String rawError) {
+    final lower = rawError.toLowerCase();
+    if (lower.contains('failed to load model from buffer') ||
+        lower.contains('invalid_argument') ||
+        lower.contains('incomplete') ||
+        lower.contains('corrupt')) {
+      return 'The model file appears to be incomplete or corrupted. This usually happens when the download is interrupted or the file is invalid.';
+    }
+    if (lower.contains('out of memory') ||
+        lower.contains('allocate') ||
+        lower.contains('oom') ||
+        lower.contains('cannot allocate')) {
+      return 'Your device ran out of memory (RAM) trying to load this model. Mobile devices have strict memory limits; try using a smaller or more highly quantized model (e.g., 1B or 3B parameters, q4_k_m quantized).';
+    }
+    if (lower.contains('opencl') ||
+        lower.contains('vulkan') ||
+        lower.contains('opengl') ||
+        lower.contains('gpu') ||
+        lower.contains('cl_') ||
+        lower.contains('driver')) {
+      return 'A hardware or GPU driver error occurred while initializing the model. Try disabling GPU acceleration or switching to CPU-only inference in Settings.';
+    }
+    return 'The native AI engine encountered an unexpected error while loading the model. Please check the technical details below for more information.';
+  }
+
+  Widget _buildTipRow(BuildContext context, IconData icon, String text) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: isDark ? 0.15 : 0.08),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              size: 16,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                height: 1.45,
+                color: isDark ? Colors.white70 : Colors.black87,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -75,7 +75,8 @@ void main() {
     Get.put(CloudService());
     Get.put(DownloadService());
     Get.put(LocalImageService());
-    final crashReporting = await Get.putAsync(() => CrashReportingService().init());
+    final crashReporting =
+        await Get.putAsync(() => CrashReportingService().init());
     FlutterError.onError = (details) {
       FlutterError.presentError(details);
       appLog.error(
@@ -183,7 +184,8 @@ void _autoConfigureForDevice() {
   hive.setSetting(AppConstants.keyTemperature, 0.3);
   hive.setSetting('device_auto_configured', true);
 
-  Get.find<AppLogService>().info('[AutoConfig] Set context=${device.recommendedContextSize}, '
+  Get.find<AppLogService>().info(
+      '[AutoConfig] Set context=${device.recommendedContextSize}, '
       'maxTokens=${device.recommendedMaxTokens} for ${device.totalRamGB.value.toStringAsFixed(1)}GB RAM');
 }
 

@@ -81,6 +81,84 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_DOWNLOAD_ID", "Download ID is missing.", null)
                     }
                 }
+                "downloadModelInApp" -> {
+                    val url = call.argument<String>("url")
+                    val filename = call.argument<String>("filename")
+                    val modelsDir = call.argument<String>("modelsDir")
+                    if (url.isNullOrBlank() || filename.isNullOrBlank() || modelsDir.isNullOrBlank()) {
+                        result.error("INVALID_DOWNLOAD", "URL, filename, or modelsDir is missing.", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val downloadId = enqueueDownloadInApp(url, filename, modelsDir)
+                        result.success(mapOf("downloadId" to downloadId, "filename" to sanitizeFilename(filename)))
+                    } catch (e: Exception) {
+                        result.error("DOWNLOAD_FAILED", e.message ?: e.toString(), null)
+                    }
+                }
+                "cancelDownloadInApp" -> {
+                    val downloadId = (call.argument<Any>("downloadId") as? Number)?.toLong()
+                    if (downloadId != null) {
+                        try {
+                            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                            manager.remove(downloadId)
+                            val filename = call.argument<String>("filename")
+                            if (!filename.isNullOrBlank()) {
+                                val destFile = File(File(getExternalFilesDir(null), "temp_downloads"), sanitizeFilename(filename))
+                                if (destFile.exists()) destFile.delete()
+                            }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("CANCEL_FAILED", e.message ?: e.toString(), null)
+                        }
+                    } else {
+                        result.error("INVALID_DOWNLOAD_ID", "Download ID is missing.", null)
+                    }
+                }
+                "getActiveDownloads" -> {
+                    try {
+                        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                        val query = DownloadManager.Query().setFilterByStatus(
+                            DownloadManager.STATUS_RUNNING or 
+                            DownloadManager.STATUS_PAUSED or 
+                            DownloadManager.STATUS_PENDING
+                        )
+                        val activeList = mutableListOf<Map<String, Any>>()
+                        manager.query(query)?.use { cursor ->
+                            val idIndex = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
+                            val titleIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
+                            val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                            val bytesDownloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                            val bytesTotalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+
+                            if (idIndex >= 0 && titleIndex >= 0 && statusIndex >= 0 && bytesDownloadedIndex >= 0 && bytesTotalIndex >= 0) {
+                                while (cursor.moveToNext()) {
+                                    val id = cursor.getLong(idIndex)
+                                    val title = cursor.getString(titleIndex)
+                                    val status = cursor.getInt(statusIndex)
+                                    val downloaded = cursor.getLong(bytesDownloadedIndex)
+                                    val total = cursor.getLong(bytesTotalIndex)
+                                    val statusStr = when (status) {
+                                        DownloadManager.STATUS_RUNNING -> "Downloading..."
+                                        DownloadManager.STATUS_PAUSED -> "Paused"
+                                        DownloadManager.STATUS_PENDING -> "Pending"
+                                        else -> "Unknown"
+                                    }
+                                    activeList.add(mapOf(
+                                        "downloadId" to id,
+                                        "filename" to title,
+                                        "downloaded" to downloaded,
+                                        "total" to total,
+                                        "status" to statusStr
+                                    ))
+                                }
+                            }
+                        }
+                        result.success(activeList)
+                    } catch (e: java.lang.Exception) {
+                        result.error("QUERY_FAILED", e.message ?: e.toString(), null)
+                    }
+                }
                 "restartApp" -> {
                     restartApp()
                     result.success(null)
@@ -381,6 +459,8 @@ class MainActivity : FlutterActivity() {
             setAllowedOverMetered(true)
             setAllowedOverRoaming(true)
             setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safeName)
+            addRequestHeader("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+            addRequestHeader("Accept", "*/*")
         }
         val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val downloadId = manager.enqueue(request)
@@ -429,6 +509,101 @@ class MainActivity : FlutterActivity() {
                                 emitProgress(safeName, downloaded, total, 0.0, "Download failed")
                             } else {
                                 emitProgress(safeName, downloaded, total, bytesPerSecond, "Downloading to phone...")
+                            }
+                        }
+                    } else {
+                        isFinished = true
+                        emitProgress(safeName, 0, 0, 0.0, "Download cancelled")
+                    }
+                } ?: run {
+                    isFinished = true
+                }
+            }
+        }
+        return downloadId
+    }
+
+    private fun enqueueDownloadInApp(url: String, filename: String, modelsDir: String): Long {
+        val safeName = sanitizeFilename(filename)
+        val tempDownloadsDir = File(getExternalFilesDir(null), "temp_downloads")
+        tempDownloadsDir.mkdirs()
+        val destFile = File(tempDownloadsDir, safeName)
+        if (destFile.exists()) destFile.delete()
+
+        val request = DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle(safeName)
+            setDescription("Downloading local AI model")
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+            setAllowedOverMetered(true)
+            setAllowedOverRoaming(true)
+            setDestinationUri(Uri.fromFile(destFile))
+            addRequestHeader("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+            addRequestHeader("Accept", "*/*")
+        }
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val downloadId = manager.enqueue(request)
+
+        thread(name = "download-inapp-monitor-$downloadId") {
+            var isFinished = false
+            var lastBytes = 0L
+            var lastTime = System.currentTimeMillis()
+            var lastReportedSpeed = 0.0
+
+            while (!isFinished) {
+                Thread.sleep(1000)
+                val query = DownloadManager.Query().setFilterById(downloadId)
+                manager.query(query)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                        val bytesDownloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                        val bytesTotalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+
+                        if (statusIndex >= 0 && bytesDownloadedIndex >= 0 && bytesTotalIndex >= 0) {
+                            val status = cursor.getInt(statusIndex)
+                            val downloaded = cursor.getLong(bytesDownloadedIndex)
+                            val total = cursor.getLong(bytesTotalIndex)
+
+                            val now = System.currentTimeMillis()
+                            val elapsedSeconds = (now - lastTime) / 1000.0
+                            var bytesPerSecond = 0.0
+
+                            if (downloaded > lastBytes) {
+                                bytesPerSecond = if (elapsedSeconds > 0) ((downloaded - lastBytes) / elapsedSeconds) else 0.0
+                                lastBytes = downloaded
+                                lastTime = now
+                                lastReportedSpeed = bytesPerSecond
+                            } else {
+                                if (elapsedSeconds > 3.0) {
+                                    lastReportedSpeed = 0.0
+                                }
+                                bytesPerSecond = lastReportedSpeed
+                            }
+
+                            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                                isFinished = true
+                                try {
+                                    Log.d("MainActivity", "Download successful for $safeName. Temp file size: ${destFile.length()} bytes, expected: $total bytes")
+                                    emitProgress(safeName, downloaded, total, 0.0, "Importing to app storage...")
+                                    val targetFile = File(modelsDir, safeName)
+                                    val partFile = File(targetFile.parentFile, "${targetFile.name}.part")
+                                    if (partFile.exists()) partFile.delete()
+                                    if (destFile.exists()) {
+                                        destFile.copyTo(partFile, overwrite = true)
+                                        if (targetFile.exists()) targetFile.delete()
+                                        partFile.renameTo(targetFile)
+                                        destFile.delete()
+                                        Log.d("MainActivity", "Model copy successful for $safeName. Final size: ${targetFile.length()} bytes")
+                                    }
+                                    emitProgress(safeName, total, total, 0.0, "Download complete")
+                                } catch (e: Exception) {
+                                    Log.e("MainActivity", "Failed to copy downloaded model: ${e.message}", e)
+                                    emitProgress(safeName, downloaded, total, 0.0, "Download failed: import error")
+                                }
+                            } else if (status == DownloadManager.STATUS_FAILED) {
+                                isFinished = true
+                                emitProgress(safeName, downloaded, total, 0.0, "Download failed")
+                            } else {
+                                emitProgress(safeName, downloaded, total, bytesPerSecond, "Downloading...")
                             }
                         }
                     } else {

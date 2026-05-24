@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 
 final Dio _dio = Dio();
 final Map<String, CancelToken> _cancelTokens = {};
+const _channel = MethodChannel('com.aichat.ai_chat/model_import');
 
 Future<String> getModelsDir() async {
   final dir = await getApplicationDocumentsDirectory();
@@ -41,13 +43,51 @@ Future<int> getRemoteFileSize(String url, {String? authToken}) async {
     headers['Authorization'] = 'Bearer $authToken';
   }
 
-  final response = await _dio.head(
-    url,
-    options: Options(headers: headers, followRedirects: true),
-  );
+  // 1. Try HEAD request
+  try {
+    final response = await _dio.head(
+      url,
+      options: Options(headers: headers, followRedirects: true),
+    );
+    final length = response.headers.value(Headers.contentLengthHeader);
+    final size = int.tryParse(length ?? '') ?? 0;
+    if (size > 0) return size;
+  } catch (_) {
+    // If HEAD fails, fall back to GET with Range
+  }
 
-  final length = response.headers.value(Headers.contentLengthHeader);
-  return int.tryParse(length ?? '') ?? 0;
+  // 2. Try GET request with Range: bytes=0-0 (efficiently fetch metadata only)
+  try {
+    final response = await _dio.get(
+      url,
+      options: Options(
+        headers: {
+          ...headers,
+          'Range': 'bytes=0-0',
+        },
+        followRedirects: true,
+      ),
+    );
+    
+    // Check Content-Range header first (e.g., bytes 0-0/12345678)
+    final contentRange = response.headers.value('content-range');
+    if (contentRange != null) {
+      final parts = contentRange.split('/');
+      if (parts.length > 1) {
+        final size = int.tryParse(parts.last.trim());
+        if (size != null && size > 0) return size;
+      }
+    }
+
+    // Fallback to Content-Length (if the server ignored Range and returned the whole file)
+    final length = response.headers.value(Headers.contentLengthHeader);
+    final size = int.tryParse(length ?? '') ?? 0;
+    if (size > 0) return size;
+  } catch (_) {
+    // Both failed
+  }
+
+  return 0;
 }
 
 Future<String> downloadModel({
@@ -133,4 +173,60 @@ Future<void> deleteModel(String path) async {
   if (await partFile.exists()) await partFile.delete();
   final tempFile = File('$path.tmp');
   if (await tempFile.exists()) await tempFile.delete();
+}
+
+// ── Native MethodChannel bridges (Android DownloadManager) ──
+
+Future<Map<String, dynamic>?> startNativeDownload({
+  required String url,
+  required String filename,
+  required String modelsDir,
+}) async {
+  if (!Platform.isAndroid) return null;
+  try {
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'downloadModelInApp',
+      {
+        'url': url,
+        'filename': filename,
+        'modelsDir': modelsDir,
+      },
+    );
+    return result;
+  } catch (e) {
+    print('[DownloadNative] startNativeDownload failed: $e');
+    rethrow;
+  }
+}
+
+Future<bool> cancelNativeDownload({
+  required int downloadId,
+  required String filename,
+}) async {
+  if (!Platform.isAndroid) return false;
+  try {
+    final result = await _channel.invokeMethod<bool>(
+      'cancelDownloadInApp',
+      {
+        'downloadId': downloadId,
+        'filename': filename,
+      },
+    );
+    return result ?? false;
+  } catch (e) {
+    print('[DownloadNative] cancelNativeDownload failed: $e');
+    return false;
+  }
+}
+
+Future<List<Map<String, dynamic>>> getActiveNativeDownloads() async {
+  if (!Platform.isAndroid) return [];
+  try {
+    final List<dynamic>? result = await _channel.invokeListMethod<dynamic>('getActiveDownloads');
+    if (result == null) return [];
+    return result.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  } catch (e) {
+    print('[DownloadNative] getActiveNativeDownloads failed: $e');
+    return [];
+  }
 }

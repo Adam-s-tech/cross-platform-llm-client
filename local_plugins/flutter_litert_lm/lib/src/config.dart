@@ -21,12 +21,16 @@ class LiteLmEngineConfig {
   /// Backend for audio processing. Required for multimodal audio input.
   final LiteLmBackend? audioBackend;
 
+  /// The maximum number of tokens (KV cache size).
+  final int? maxNumTokens;
+
   const LiteLmEngineConfig({
     required this.modelPath,
     this.backend = LiteLmBackend.cpu,
     this.cacheDir,
     this.visionBackend,
     this.audioBackend,
+    this.maxNumTokens,
   });
 
   Map<String, dynamic> toMap() => {
@@ -35,6 +39,7 @@ class LiteLmEngineConfig {
         if (cacheDir != null) 'cacheDir': cacheDir,
         if (visionBackend != null) 'visionBackend': visionBackend!.name,
         if (audioBackend != null) 'audioBackend': audioBackend!.name,
+        if (maxNumTokens != null) 'maxNumTokens': maxNumTokens,
       };
 }
 

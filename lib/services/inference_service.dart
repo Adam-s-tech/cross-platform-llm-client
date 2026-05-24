@@ -110,6 +110,11 @@ class InferenceService extends GetxService {
           ) ??
           AppConstants.defaultContextSize;
 
+      final finalContextSize = isLiteRt ? contextSize.clamp(512, 4096) : contextSize;
+
+      final lastLoadedContext = _hive.getSetting<int>('last_loaded_context_size') ?? 0;
+      final contextChanged = isLiteRt && lastLoadedContext != finalContextSize;
+
       final deviceTier = _getDeviceTier();
       final isTensorSoC = _getIsTensorSoC();
 
@@ -118,12 +123,12 @@ class InferenceService extends GetxService {
       var result = await _loadModelOnEngine(
         modelPath: modelPath,
         modelRuntime: modelRuntime,
-        contextSize: contextSize,
+        contextSize: finalContextSize,
         deviceTier: deviceTier,
         isTensorSoC: isTensorSoC,
         liteRtPerformanceMode: liteRtMode,
         forceLiteRtCpu: forceLiteRtCpu,
-        clearLiteRtCache: hadPendingGpuLoad || (isLiteRt && gpuCrashDetected),
+        clearLiteRtCache: hadPendingGpuLoad || (isLiteRt && gpuCrashDetected) || contextChanged,
         markLiteRtGpuPending: shouldTryLiteRtGpu,
         enableLiteRtVision: enableLiteRtVision,
       );
@@ -184,7 +189,7 @@ class InferenceService extends GetxService {
         await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
       }
       contextTokensUsed.value = 0;
-      contextTokensTotal.value = contextSize;
+      contextTokensTotal.value = finalContextSize;
 
       await _hive.setSetting(AppConstants.keyLocalModelPath, modelPath);
       await _hive.setSetting(
@@ -193,6 +198,10 @@ class InferenceService extends GetxService {
           AppConstants.keyLocalModelRuntime, loadedModelRuntime.value);
       await _hive.setSetting(
           AppConstants.keyLocalModelBackend, loadedBackend.value);
+
+      if (isLiteRt) {
+        await _hive.setSetting('last_loaded_context_size', finalContextSize);
+      }
 
       return result.message;
     } catch (e) {

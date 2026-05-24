@@ -246,7 +246,10 @@ class LlamaController implements LlamaFlutterApi {
 
   @override
   void onError(String error) {
+    _isGenerating = false;
     _tokenController?.addError(Exception(error));
+    _tokenController?.close();
+    _tokenController = null;
   }
 
   @override

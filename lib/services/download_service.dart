@@ -1,5 +1,9 @@
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import '../controllers/model_controller.dart';
 
 import 'download_native.dart' if (dart.library.html) 'download_web.dart'
     as platform_dl;
@@ -31,6 +35,7 @@ class DownloadProgress {
 class DownloadService extends GetxService {
   /// Currently active downloads.
   final activeDownloads = <String, DownloadProgress>{}.obs;
+  final _nativeDownloadIds = <String, int>{};
 
   bool get isDownloadingAny => activeDownloads.isNotEmpty;
 
@@ -63,6 +68,128 @@ class DownloadService extends GetxService {
     return await platform_dl.getRemoteFileSize(url, authToken: authToken);
   }
 
+  @override
+  void onInit() {
+    super.onInit();
+    
+    if (!kIsWeb && Platform.isAndroid) {
+      // Listen to OS system lifecycle to reconcile active downloads upon app resume!
+      SystemChannels.lifecycle.setMessageHandler((msg) async {
+        if (msg == AppLifecycleState.resumed.toString()) {
+          reconcileActiveDownloads();
+        }
+        return null;
+      });
+
+      // Initial reconciliation on startup
+      reconcileActiveDownloads();
+
+      // Permanent channel progress listener
+      const MethodChannel('com.aichat.ai_chat/model_import').setMethodCallHandler((call) async {
+        if (call.method == 'importProgress') {
+          final data = Map<String, dynamic>.from(call.arguments as Map);
+          final filename = data['filename'] as String;
+          final downloaded = (data['copiedBytes'] as num).toInt();
+          final total = (data['totalBytes'] as num).toInt();
+          final speed = (data['bytesPerSecond'] as num).toDouble();
+          final status = data['status'] as String;
+
+          var progress = activeDownloads[filename];
+          if (progress == null && (status == 'Downloading...' || status == 'Downloading to phone...' || status.startsWith('Importing'))) {
+            progress = DownloadProgress(filename: filename);
+            activeDownloads[filename] = progress;
+          }
+          if (progress != null) {
+            progress.downloadedBytes.value = downloaded;
+            progress.totalBytes.value = total;
+            progress.bytesPerSecond.value = speed;
+            if (total > 0) {
+              progress.progress.value = downloaded / total;
+            }
+            
+            if (status == 'Download complete') {
+              activeDownloads.remove(filename);
+              _nativeDownloadIds.remove(filename);
+              // Trigger reload
+              try {
+                Get.find<ModelController>().refreshDownloaded();
+              } catch (_) {}
+            } else if (status.startsWith('Download failed') || status == 'Download cancelled') {
+              activeDownloads.remove(filename);
+              _nativeDownloadIds.remove(filename);
+            }
+          }
+
+          // Also update ModelController import state in real-time if it is currently importing
+          try {
+            final modelCtrl = Get.find<ModelController>();
+            if (modelCtrl.isImporting.value) {
+              final isPhoneDownload = modelCtrl.importStatus.value.contains('phone') || modelCtrl.importStatus.value.contains('Starting');
+              
+              modelCtrl.importFileName.value = filename;
+              modelCtrl.importStatus.value = status;
+              modelCtrl.importCopiedBytes.value = downloaded;
+              modelCtrl.importTotalBytes.value = total;
+              modelCtrl.importBytesPerSecond.value = speed;
+              
+              if (status == 'Download complete' ||
+                  status.startsWith('Download failed') ||
+                  status == 'Download cancelled') {
+                if (status == 'Download complete' && isPhoneDownload) {
+                  Get.snackbar(
+                    'Saved to Downloads',
+                    'Import this file to use it in the app.',
+                    snackPosition: SnackPosition.BOTTOM,
+                    duration: const Duration(seconds: 5),
+                  );
+                }
+                Future.delayed(const Duration(seconds: 3), () {
+                  if (modelCtrl.importStatus.value == status) {
+                    modelCtrl.isImporting.value = false;
+                    modelCtrl.importFileName.value = '';
+                    modelCtrl.importStatus.value = '';
+                  }
+                });
+              }
+            }
+          } catch (_) {}
+        }
+        return null;
+      });
+    }
+  }
+
+  Future<void> reconcileActiveDownloads() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      final list = await platform_dl.getActiveNativeDownloads();
+      for (final item in list) {
+        final id = item['downloadId'] as int;
+        final filename = item['filename'] as String;
+        final downloaded = item['downloaded'] as int;
+        final total = item['total'] as int;
+        final status = item['status'] as String;
+
+        _nativeDownloadIds[filename] = id;
+
+        if (!activeDownloads.containsKey(filename)) {
+          final progress = DownloadProgress(filename: filename);
+          progress.downloadedBytes.value = downloaded;
+          progress.totalBytes.value = total;
+          if (total > 0) {
+            progress.progress.value = downloaded / total;
+          }
+          if (status == 'Paused') {
+            progress.isPaused.value = true;
+          }
+          activeDownloads[filename] = progress;
+        }
+      }
+    } catch (e) {
+      print('[DownloadService] Failed to reconcile active downloads: $e');
+    }
+  }
+
   Future<String> downloadModel({
     required String url,
     required String filename,
@@ -70,44 +197,77 @@ class DownloadService extends GetxService {
   }) async {
     if (kIsWeb) return 'ERROR: Downloading models is not supported on web.';
 
-    final savePath = await modelPath(filename);
     final downloadProgress = DownloadProgress(filename: filename);
     activeDownloads[filename] = downloadProgress;
 
-    try {
-      final result = await platform_dl.downloadModel(
-        url: url,
-        savePath: savePath,
-        authToken: authToken,
-        onProgress: (received, total) {
-          downloadProgress.downloadedBytes.value = received;
-          downloadProgress.totalBytes.value = total;
-          final elapsed = DateTime.now()
-              .difference(downloadProgress.startedAt)
-              .inMilliseconds;
-          if (elapsed > 0) {
-            downloadProgress.bytesPerSecond.value = received / (elapsed / 1000);
-          }
-          if (total > 0) {
-            downloadProgress.progress.value = received / total;
-          }
-        },
-      );
-      activeDownloads.remove(filename);
-      return result;
-    } catch (e) {
-      activeDownloads.remove(filename);
-      rethrow;
+    if (Platform.isAndroid) {
+      try {
+        final modelsDirectory = await modelsDir;
+        final result = await platform_dl.startNativeDownload(
+          url: url,
+          filename: filename,
+          modelsDir: modelsDirectory,
+        );
+        if (result != null) {
+          final id = result['downloadId'] as int;
+          _nativeDownloadIds[filename] = id;
+          return 'NATIVE_BACKGROUND_STARTED';
+        }
+        throw Exception('Native download failed to start.');
+      } catch (e) {
+        activeDownloads.remove(filename);
+        rethrow;
+      }
+    } else {
+      // Fallback for iOS/Desktop using standard Dio download
+      final savePath = await modelPath(filename);
+      try {
+        final result = await platform_dl.downloadModel(
+          url: url,
+          savePath: savePath,
+          authToken: authToken,
+          onProgress: (received, total) {
+            downloadProgress.downloadedBytes.value = received;
+            downloadProgress.totalBytes.value = total;
+            final elapsed = DateTime.now()
+                .difference(downloadProgress.startedAt)
+                .inMilliseconds;
+            if (elapsed > 0) {
+              downloadProgress.bytesPerSecond.value = received / (elapsed / 1000);
+            }
+            if (total > 0) {
+              downloadProgress.progress.value = received / total;
+            }
+          },
+        );
+        activeDownloads.remove(filename);
+        return result;
+      } catch (e) {
+        activeDownloads.remove(filename);
+        rethrow;
+      }
     }
   }
 
   void pauseDownload(String filename) {
-    platform_dl.pauseDownload(filename);
-    activeDownloads[filename]?.isPaused.value = true;
+    final nativeId = _nativeDownloadIds[filename];
+    if (nativeId != null && Platform.isAndroid) {
+      platform_dl.cancelNativeDownload(downloadId: nativeId, filename: filename);
+      activeDownloads.remove(filename);
+      _nativeDownloadIds.remove(filename);
+    } else {
+      platform_dl.pauseDownload(filename);
+      activeDownloads[filename]?.isPaused.value = true;
+    }
   }
 
   Future<void> deleteModel(String filename) async {
     if (kIsWeb) return;
+    final nativeId = _nativeDownloadIds[filename];
+    if (nativeId != null && Platform.isAndroid) {
+      await platform_dl.cancelNativeDownload(downloadId: nativeId, filename: filename);
+      _nativeDownloadIds.remove(filename);
+    }
     await platform_dl.deleteModel(await modelPath(filename));
   }
 

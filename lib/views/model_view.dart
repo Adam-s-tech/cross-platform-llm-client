@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -78,7 +79,8 @@ class ModelView extends GetView<ModelController> {
                         onTap: controller.toggleSort,
                         borderRadius: BorderRadius.circular(4),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 2),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -89,7 +91,9 @@ class ModelView extends GetView<ModelController> {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                controller.sortSmallestFirst.value ? 'Size' : 'Name',
+                                controller.sortSmallestFirst.value
+                                    ? 'Size'
+                                    : 'Name',
                                 style: GoogleFonts.inter(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
@@ -189,23 +193,30 @@ class ModelView extends GetView<ModelController> {
                 onTap: () => controller.setLocalFilter(entry.key),
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
                     color: selected == entry.key
                         ? AppColors.primary.withValues(alpha: 0.18)
-                        : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                        : Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: selected == entry.key
                           ? AppColors.primary.withValues(alpha: 0.3)
-                          : Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                          : Theme.of(context)
+                              .dividerColor
+                              .withValues(alpha: 0.5),
                     ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (selected == entry.key) ...[
-                        const Icon(Icons.check, size: 16, color: AppColors.primary),
+                        const Icon(Icons.check,
+                            size: 16, color: AppColors.primary),
                         const SizedBox(width: 4),
                       ],
                       Text(
@@ -283,7 +294,6 @@ class ModelView extends GetView<ModelController> {
     final urlController = TextEditingController();
     final filenameController = TextEditingController();
     final sizeController = TextEditingController();
-    final descriptionController = TextEditingController();
     final templateController = TextEditingController(text: 'chatml');
     final isVision = false.obs;
     final isDetecting = false.obs;
@@ -292,13 +302,12 @@ class ModelView extends GetView<ModelController> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.65),
+      barrierColor: Colors.black.withValues(alpha: 0.655),
       builder: (ctx) => _AddModelUrlSheet(
         nameController: nameController,
         urlController: urlController,
         filenameController: filenameController,
         sizeController: sizeController,
-        descriptionController: descriptionController,
         templateController: templateController,
         isVision: isVision,
         isDetecting: isDetecting,
@@ -387,7 +396,8 @@ class ModelView extends GetView<ModelController> {
                   ],
                 ),
               ),
-              const Icon(Icons.check_circle, color: AppColors.success, size: 20),
+              const Icon(Icons.check_circle,
+                  color: AppColors.success, size: 20),
             ],
           ),
         );
@@ -556,7 +566,6 @@ class ModelView extends GetView<ModelController> {
         return const SizedBox.shrink();
       }
       final progress = inference.modelLoadProgress.value;
-      final percent = progress * 100;
 
       return Container(
         margin: const EdgeInsets.only(top: 12),
@@ -581,19 +590,10 @@ class ModelView extends GetView<ModelController> {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Loading into memory · ${percent.toStringAsFixed(0)}%',
+                  'Loading into memory',
                   style: GoogleFonts.inter(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
-                    color: AppColors.secondary,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '${percent.toStringAsFixed(0)}%',
-                  style: GoogleFonts.firaCode(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
                     color: AppColors.secondary,
                   ),
                 ),
@@ -668,8 +668,10 @@ class ModelView extends GetView<ModelController> {
                     children: [
                       Expanded(
                         child: Text(
-                          controller.importStatus.value.toLowerCase().contains('download') 
-                              ? 'Downloading' 
+                          controller.importStatus.value
+                                  .toLowerCase()
+                                  .contains('download')
+                              ? 'Downloading'
                               : 'Importing',
                           style: GoogleFonts.inter(
                             fontSize: 14,
@@ -692,7 +694,8 @@ class ModelView extends GetView<ModelController> {
                           child: InkWell(
                             onTap: controller.cancelExternalDownload,
                             borderRadius: BorderRadius.circular(12),
-                            child: const Icon(Icons.close, size: 20, color: AppColors.error),
+                            child: const Icon(Icons.close,
+                                size: 20, color: AppColors.error),
                           ),
                         ),
                     ],
@@ -2150,13 +2153,14 @@ class ModelView extends GetView<ModelController> {
           localImage.loadedModelName.value == model.filename;
       final isCurrentlyDownloading =
           controller.isDownloadingModel(model.filename);
-      final isAnyModelLoading = inference.isLoadingModel.value ||
-          localImage.isLoadingModel.value;
+      final isAnyModelLoading =
+          inference.isLoadingModel.value || localImage.isLoadingModel.value;
       final isThisTextModelLoading = inference.isLoadingModel.value &&
           inference.loadingModelName.value == model.filename;
       final isThisImageModelLoading = localImage.isLoadingModel.value &&
           localImage.loadedModelName.value == model.filename;
-      final isThisModelLoading = isThisTextModelLoading || isThisImageModelLoading;
+      final isThisModelLoading =
+          isThisTextModelLoading || isThisImageModelLoading;
       final disableActions = controller.isImporting.value ||
           isAnyModelLoading ||
           isCurrentlyDownloading;
@@ -2292,17 +2296,6 @@ class ModelView extends GetView<ModelController> {
                             child: const Text('Get',
                                 style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
-                          TextButton.icon(
-                            onPressed: disableActions
-                                ? null
-                                : () => controller.importModelFromStorage(),
-                            icon: const Icon(Icons.upload_file, size: 16),
-                            label: const Text('Import'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.secondary,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
                           if (model.url.trim().isNotEmpty)
                             IconButton(
                               tooltip: 'Download to phone Downloads folder',
@@ -2432,7 +2425,6 @@ class _AddModelUrlSheet extends StatefulWidget {
   final TextEditingController urlController;
   final TextEditingController filenameController;
   final TextEditingController sizeController;
-  final TextEditingController descriptionController;
   final TextEditingController templateController;
   final RxBool isVision;
   final RxBool isDetecting;
@@ -2443,7 +2435,6 @@ class _AddModelUrlSheet extends StatefulWidget {
     required this.urlController,
     required this.filenameController,
     required this.sizeController,
-    required this.descriptionController,
     required this.templateController,
     required this.isVision,
     required this.isDetecting,
@@ -2456,6 +2447,9 @@ class _AddModelUrlSheet extends StatefulWidget {
 
 class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
   static const _templates = ['chatml', 'llama3', 'gemma', 'phi3', 'custom'];
+  Timer? _urlDebounce;
+  final RxString _urlError = ''.obs;
+  final RxString _urlWarning = ''.obs;
 
   @override
   void initState() {
@@ -2466,15 +2460,78 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
   @override
   void dispose() {
     widget.urlController.removeListener(_onUrlChanged);
+    _urlDebounce?.cancel();
     super.dispose();
+  }
+
+  String _detectTemplateFromUrlOrFilename(String url, String filename) {
+    final textToSearch = '$url $filename'.toLowerCase();
+    if (textToSearch.contains('gemma')) {
+      return 'gemma';
+    } else if (textToSearch.contains('llama3') ||
+        textToSearch.contains('llama-3') ||
+        textToSearch.contains('llama_3') ||
+        textToSearch.contains('llama 3')) {
+      return 'llama3';
+    } else if (textToSearch.contains('phi3') ||
+        textToSearch.contains('phi-3') ||
+        textToSearch.contains('phi_3') ||
+        textToSearch.contains('phi 3')) {
+      return 'phi3';
+    }
+    return 'chatml'; // Default fallback
   }
 
   void _onUrlChanged() {
     final url = widget.urlController.text.trim();
-    if (widget.filenameController.text.trim().isEmpty && url.isNotEmpty) {
-      widget.filenameController.text =
-          widget.modelController.filenameFromUrl(url);
+    if (url.isNotEmpty) {
+      final filename = widget.modelController.filenameFromUrl(url);
+      widget.filenameController.text = filename;
+      widget.templateController.text =
+          _detectTemplateFromUrlOrFilename(url, filename);
     }
+
+    _urlDebounce?.cancel();
+    _urlDebounce = Timer(const Duration(milliseconds: 900), () async {
+      if (url.isEmpty) {
+        _urlError.value = '';
+        _urlWarning.value = '';
+        widget.sizeController.text = '';
+        return;
+      }
+
+      // Check if it is a valid HTTP/HTTPS URL format
+      final uri = Uri.tryParse(url);
+      if (uri == null ||
+          !uri.hasScheme ||
+          (uri.scheme != 'http' && uri.scheme != 'https')) {
+        _urlError.value =
+            'Invalid URL format. Must start with http:// or https://';
+        _urlWarning.value = '';
+        widget.sizeController.text = 'Unknown size';
+        return;
+      }
+
+      _urlError.value = '';
+      _urlWarning.value = '';
+      widget.isDetecting.value = true;
+      try {
+        final sizeLabel = await widget.modelController.detectUrlSize(url);
+        if (sizeLabel == 'Unknown size') {
+          _urlWarning.value =
+              'Could not resolve file size. Ensure the URL is accessible.';
+          widget.sizeController.text = 'Unknown size';
+        } else {
+          _urlWarning.value = '';
+          widget.sizeController.text = sizeLabel;
+        }
+      } catch (e) {
+        _urlWarning.value = 'Could not resolve file size: $e';
+        widget.sizeController.text = 'Unknown size';
+      } finally {
+        widget.isDetecting.value = false;
+      }
+    });
   }
 
   Future<void> _detectSize() async {
@@ -2482,8 +2539,18 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
     if (url.isEmpty) return;
     widget.isDetecting.value = true;
     try {
-      widget.sizeController.text =
-          await widget.modelController.detectUrlSize(url);
+      final sizeLabel = await widget.modelController.detectUrlSize(url);
+      if (sizeLabel == 'Unknown size') {
+        _urlWarning.value =
+            'Could not resolve file size. Ensure the URL is accessible.';
+        widget.sizeController.text = 'Unknown size';
+      } else {
+        _urlWarning.value = '';
+        widget.sizeController.text = sizeLabel;
+      }
+    } catch (e) {
+      _urlWarning.value = 'Could not resolve file size: $e';
+      widget.sizeController.text = 'Unknown size';
     } finally {
       widget.isDetecting.value = false;
     }
@@ -2492,12 +2559,30 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
   Future<void> _submit() async {
     final url = widget.urlController.text.trim();
     if (url.isEmpty) return;
+
+    // Validate format synchronously
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !uri.hasScheme ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      _urlError.value =
+          'Invalid URL format. Must start with http:// or https://';
+      return;
+    }
+
+    if (_urlError.value.isNotEmpty) return;
+    _urlDebounce?.cancel();
+
     await widget.modelController.addModelFromUrl(
-      name: widget.nameController.text,
+      name: widget.nameController.text.trim().isEmpty
+          ? widget.filenameController.text
+          : widget.nameController.text.trim(),
       url: url,
       filename: widget.filenameController.text,
-      size: widget.sizeController.text,
-      description: widget.descriptionController.text,
+      size: widget.sizeController.text.isEmpty
+          ? 'Unknown size'
+          : widget.sizeController.text,
+      description: 'Added custom model via URL',
       template: widget.templateController.text,
       isVision: widget.isVision.value,
     );
@@ -2508,17 +2593,19 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
-    const sheetBg = Color(0xFF13131F);
-    const fieldBg = Color(0xFF1C1C2C);
-    const borderCol = Color(0xFF2A2A3D);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sheetBg = isDark ? const Color(0xFF13131F) : const Color(0xFFF8F9FC);
+    final fieldBg = isDark ? const Color(0xFF1C1C2C) : Colors.white;
+    final borderCol =
+        isDark ? const Color(0xFF2A2A3D) : const Color(0xFFE2E8F0);
 
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Container(
         margin: EdgeInsets.only(bottom: bottomPadding),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: sheetBg,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2529,7 +2616,7 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.border,
+                color: isDark ? AppColors.border : const Color(0xFFE2E8F0),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -2539,11 +2626,13 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFF1A1A2E), Color(0xFF13131F)],
+                  colors: isDark
+                      ? [const Color(0xFF1A1A2E), const Color(0xFF13131F)]
+                      : [const Color(0xFFF1F5F9), const Color(0xFFF8F9FC)],
                 ),
               ),
               child: Row(
@@ -2578,7 +2667,7 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
                           style: GoogleFonts.inter(
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                            color: isDark ? Colors.white : Colors.black87,
                           ),
                         ),
                         const SizedBox(height: 2),
@@ -2586,7 +2675,9 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
                           'Download a GGUF or LiteRT model from any URL',
                           style: GoogleFonts.inter(
                             fontSize: 12,
-                            color: AppColors.textSecondary,
+                            color: isDark
+                                ? AppColors.textSecondary
+                                : Colors.black54,
                           ),
                         ),
                       ],
@@ -2594,10 +2685,13 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded,
-                        color: AppColors.textSecondary, size: 20),
+                    icon: Icon(Icons.close_rounded,
+                        color:
+                            isDark ? AppColors.textSecondary : Colors.black54,
+                        size: 20),
                     style: IconButton.styleFrom(
-                      backgroundColor: AppColors.surface,
+                      backgroundColor:
+                          isDark ? AppColors.surface : const Color(0xFFE2E8F0),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10)),
                       padding: const EdgeInsets.all(8),
@@ -2638,6 +2732,52 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
                       bg: fieldBg,
                       border: borderCol,
                     ),
+                    Obx(() {
+                      if (_urlError.value.isNotEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6, left: 4),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.error_outline_rounded,
+                                  size: 13, color: AppColors.error),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _urlError.value,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 11,
+                                    color: AppColors.error,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      } else if (_urlWarning.value.isNotEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6, left: 4),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded,
+                                  size: 13, color: Colors.orange),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _urlWarning.value,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 11,
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    }),
                     const SizedBox(height: 20),
 
                     const _SectionLabel(label: 'MODEL INFO'),
@@ -2692,18 +2832,6 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
                     ),
                     const SizedBox(height: 20),
 
-                    const _SectionLabel(label: 'DESCRIPTION  (optional)'),
-                    const SizedBox(height: 8),
-                    _SheetTextField(
-                      controller: widget.descriptionController,
-                      hint: 'Short description of the model…',
-                      prefixIcon: Icons.notes_rounded,
-                      maxLines: 2,
-                      bg: fieldBg,
-                      border: borderCol,
-                    ),
-                    const SizedBox(height: 20),
-
                     Obx(() => _VisionToggle(
                           value: widget.isVision.value,
                           onChanged: (v) => widget.isVision.value = v,
@@ -2720,8 +2848,10 @@ class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
                           child: OutlinedButton(
                             onPressed: () => Navigator.of(context).pop(),
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.textSecondary,
-                              side: const BorderSide(color: borderCol),
+                              foregroundColor: isDark
+                                  ? AppColors.textSecondary
+                                  : Colors.black54,
+                              side: BorderSide(color: borderCol),
                               padding: const EdgeInsets.symmetric(vertical: 15),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(14)),
@@ -2803,15 +2933,21 @@ class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.label, this.color = AppColors.textMuted});
 
   @override
-  Widget build(BuildContext context) => Text(
-        label,
-        style: GoogleFonts.inter(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.4,
-          color: color,
-        ),
-      );
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final resolvedColor = color == AppColors.textMuted
+        ? (isDark ? AppColors.textMuted : const Color(0xFF64748B))
+        : color;
+    return Text(
+      label,
+      style: GoogleFonts.inter(
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.4,
+        color: resolvedColor,
+      ),
+    );
+  }
 }
 
 // ── Styled text field ─────────────────────────────────────────────────────────
@@ -2835,29 +2971,37 @@ class _SheetTextField extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Container(
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: border),
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border),
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        style: GoogleFonts.inter(
+            fontSize: 14,
+            color: isDark ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w400),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: GoogleFonts.inter(
+              fontSize: 13,
+              color: isDark ? AppColors.textMuted : const Color(0xFF94A3B8)),
+          prefixIcon: Icon(prefixIcon,
+              color: isDark ? AppColors.textMuted : const Color(0xFF94A3B8),
+              size: 18),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
-        child: TextField(
-          controller: controller,
-          keyboardType: keyboardType,
-          maxLines: maxLines,
-          style: GoogleFonts.inter(
-              fontSize: 14, color: Colors.white, fontWeight: FontWeight.w400),
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle:
-                GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
-            prefixIcon: Icon(prefixIcon, color: AppColors.textMuted, size: 18),
-            border: InputBorder.none,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          ),
-        ),
-      );
+      ),
+    );
+  }
 }
 
 // ── Detect Size button ────────────────────────────────────────────────────────
@@ -2867,36 +3011,39 @@ class _DetectSizeButton extends StatelessWidget {
   const _DetectSizeButton({required this.isLoading, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: isLoading ? null : onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: isLoading ? null : onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: isLoading
+              ? (isDark ? AppColors.surface : const Color(0xFFE2E8F0))
+              : AppColors.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
             color: isLoading
-                ? AppColors.surface
-                : AppColors.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isLoading
-                  ? AppColors.border
-                  : AppColors.primary.withValues(alpha: 0.4),
-            ),
-          ),
-          child: Center(
-            child: isLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: AppColors.primary),
-                  )
-                : const Icon(Icons.radar_rounded,
-                    color: AppColors.primary, size: 22),
+                ? (isDark ? AppColors.border : const Color(0xFFCBD5E1))
+                : AppColors.primary.withValues(alpha: 0.4),
           ),
         ),
-      );
+        child: Center(
+          child: isLoading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppColors.primary),
+                )
+              : const Icon(Icons.radar_rounded,
+                  color: AppColors.primary, size: 22),
+        ),
+      ),
+    );
+  }
 }
 
 // ── Template selector ─────────────────────────────────────────────────────────
@@ -2921,45 +3068,52 @@ class _TemplateSelector extends StatefulWidget {
 
 class _TemplateSelectorState extends State<_TemplateSelector> {
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: widget.templates.map((t) {
-            final sel = widget.controller.text == t;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: GestureDetector(
-                onTap: () => setState(() => widget.controller.text = t),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: widget.templates.map((t) {
+          final sel = widget.controller.text == t;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () => setState(() => widget.controller.text = t),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: sel
+                      ? widget.accentColor.withValues(alpha: 0.18)
+                      : widget.bg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
                     color: sel
-                        ? widget.accentColor.withValues(alpha: 0.18)
-                        : widget.bg,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: sel
-                          ? widget.accentColor.withValues(alpha: 0.6)
-                          : widget.border,
-                      width: sel ? 1.5 : 1,
-                    ),
+                        ? widget.accentColor.withValues(alpha: 0.6)
+                        : widget.border,
+                    width: sel ? 1.5 : 1,
                   ),
-                  child: Text(
-                    t,
-                    style: GoogleFonts.firaCode(
-                      fontSize: 13,
-                      fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-                      color: sel ? widget.accentColor : AppColors.textSecondary,
-                    ),
+                ),
+                child: Text(
+                  t,
+                  style: GoogleFonts.firaCode(
+                    fontSize: 13,
+                    fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                    color: sel
+                        ? widget.accentColor
+                        : (isDark
+                            ? AppColors.textSecondary
+                            : const Color(0xFF64748B)),
                   ),
                 ),
               ),
-            );
-          }).toList(),
-        ),
-      );
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
 }
 
 // ── Vision toggle ─────────────────────────────────────────────────────────────
@@ -2977,70 +3131,82 @@ class _VisionToggle extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: () => onChanged(!value),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: value ? AppColors.secondary.withValues(alpha: 0.12) : bg,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color:
-                  value ? AppColors.secondary.withValues(alpha: 0.5) : border,
-              width: value ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.all(7),
-                decoration: BoxDecoration(
-                  color: value
-                      ? AppColors.secondary.withValues(alpha: 0.2)
-                      : AppColors.surface,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  value
-                      ? Icons.visibility_rounded
-                      : Icons.visibility_off_rounded,
-                  color: value ? AppColors.secondary : AppColors.textMuted,
-                  size: 16,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Vision Model',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: value ? Colors.white : AppColors.textSecondary,
-                      ),
-                    ),
-                    Text(
-                      'Supports image input (multimodal)',
-                      style: GoogleFonts.inter(
-                          fontSize: 11, color: AppColors.textMuted),
-                    ),
-                  ],
-                ),
-              ),
-              Switch(
-                value: value,
-                onChanged: onChanged,
-                activeThumbColor: AppColors.secondary,
-                activeTrackColor: AppColors.secondary.withValues(alpha: 0.3),
-                inactiveThumbColor: AppColors.textMuted,
-                inactiveTrackColor: AppColors.surface,
-              ),
-            ],
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final titleColor = value
+        ? (isDark ? Colors.white : AppColors.secondary)
+        : (isDark ? AppColors.textSecondary : Colors.black87);
+
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: value ? AppColors.secondary.withValues(alpha: 0.12) : bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: value ? AppColors.secondary.withValues(alpha: 0.5) : border,
+            width: value ? 1.5 : 1,
           ),
         ),
-      );
+        child: Row(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: value
+                    ? AppColors.secondary.withValues(alpha: 0.2)
+                    : (isDark ? AppColors.surface : const Color(0xFFE2E8F0)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                value ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                color: value
+                    ? AppColors.secondary
+                    : (isDark ? AppColors.textMuted : const Color(0xFF64748B)),
+                size: 16,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Vision Model',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: titleColor,
+                    ),
+                  ),
+                  Text(
+                    'Supports image input (multimodal)',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: isDark
+                          ? AppColors.textMuted
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeThumbColor: AppColors.secondary,
+              activeTrackColor: AppColors.secondary.withValues(alpha: 0.3),
+              inactiveThumbColor:
+                  isDark ? AppColors.textMuted : const Color(0xFF94A3B8),
+              inactiveTrackColor:
+                  isDark ? AppColors.surface : const Color(0xFFE2E8F0),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

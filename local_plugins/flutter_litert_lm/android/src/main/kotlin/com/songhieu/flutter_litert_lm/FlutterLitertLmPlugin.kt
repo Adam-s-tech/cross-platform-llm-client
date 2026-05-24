@@ -81,6 +81,7 @@ class FlutterLitertLmPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Str
                 val cacheDir = call.argument<String>("cacheDir")
                 val visionBackendName = call.argument<String>("visionBackend")
                 val audioBackendName = call.argument<String>("audioBackend")
+                val maxNumTokens = call.argument<Int>("maxNumTokens")
 
                 val backend = parseBackend(backendName)
                 val visionBackend = visionBackendName?.let { parseBackend(it) }
@@ -91,6 +92,7 @@ class FlutterLitertLmPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Str
                     cacheDir = cacheDir ?: context.cacheDir.absolutePath,
                     visionBackend = visionBackend,
                     audioBackend = audioBackend,
+                    maxNumTokens = maxNumTokens,
                 )
 
                 val engine = Engine(configBuilder)

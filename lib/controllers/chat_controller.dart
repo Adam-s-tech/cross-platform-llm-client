@@ -228,11 +228,11 @@ class ChatController extends GetxController {
     }
   }
 
-  void clearImage() {
+  void clearImage({bool deleteFile = true}) {
     final path = selectedImagePath.value;
     selectedImagePath.value = null;
     selectedImageBase64.value = null;
-    if (path != null && path.isNotEmpty) {
+    if (deleteFile && path != null && path.isNotEmpty) {
       try {
         final f = File(path);
         if (f.existsSync()) f.deleteSync();
@@ -472,13 +472,22 @@ class ChatController extends GetxController {
       createNewChat();
     }
 
+    // Encode image to base64 if it's not already pre-encoded, so the message
+    // saved in history contains the image bytes and is 100% stable.
+    String? imgBase64 = imageBase64;
+    if (imgBase64 == null && imagePath != null && !kIsWeb) {
+      try {
+        imgBase64 = base64Encode(await File(imagePath).readAsBytes());
+      } catch (_) {}
+    }
+
     // Add user message
     final userMsg = ChatMessage(
       id: _uuid.v4(),
       chatId: currentSessionId.value,
       role: 'user',
       content: effectiveText,
-      imageBase64: imageBase64,
+      imageBase64: imgBase64, // Always save the encoded base64 string
       imagePath: imagePath,
       fileName: fileName,
       fileContent: fileContent,
@@ -489,17 +498,11 @@ class ChatController extends GetxController {
     messages.add(userMsg);
     _hive.saveMessage(userMsg.id, userMsg.toMap());
 
-    // Clear input — but first encode image to base64 BEFORE clearImage()
-    // deletes the temp file from disk (gallery picker never pre-encodes it).
+    // Clear input preview UI state — but KEEP the physical file on disk 
+    // because the native inference engine needs to read it during generation.
     textController.clear();
     inputText.value = '';
-    String? imgBase64 = imageBase64;
-    if (imgBase64 == null && imagePath != null && !kIsWeb) {
-      try {
-        imgBase64 = base64Encode(await File(imagePath).readAsBytes());
-      } catch (_) {}
-    }
-    clearImage();
+    clearImage(deleteFile: false); // Reset visual fields, do NOT delete file!
     clearFile();
     _scrollToBottom(force: true);
 

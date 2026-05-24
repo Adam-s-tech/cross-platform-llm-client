@@ -131,6 +131,7 @@ class AttachmentPreview extends StatelessWidget {
       return Image.memory(
         base64Decode(imageBase64!),
         fit: BoxFit.cover,
+        gaplessPlayback: true,
         errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
       );
     }
@@ -138,11 +139,13 @@ class AttachmentPreview extends StatelessWidget {
       return Image.file(
         File(imagePath!),
         fit: BoxFit.cover,
+        gaplessPlayback: true,
         errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
       );
     }
     return null;
   }
+
 
   static String formatFileSize(int bytes) {
     if (bytes >= 1024 * 1024 * 1024) {

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 class ChatMessage {
   final String id;
   final String chatId;
@@ -17,7 +20,16 @@ class ChatMessage {
   final int? imageGenDurationMs; // Time taken to generate image locally
   final DateTime timestamp;
 
+  // Cache decoded bytes to prevent flickering on re-build
+  Uint8List? _decodedImageBytes;
+  Uint8List? get decodedImageBytes {
+    if (imageBase64 == null) return null;
+    _decodedImageBytes ??= base64Decode(imageBase64!);
+    return _decodedImageBytes;
+  }
+
   ChatMessage({
+
     required this.id,
     required this.chatId,
     required this.role,

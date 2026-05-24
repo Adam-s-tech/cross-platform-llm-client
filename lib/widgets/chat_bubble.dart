@@ -51,7 +51,7 @@ class ChatBubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Image attachment
-              if (message.imageBase64 != null)
+              if (message.decodedImageBytes != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: GestureDetector(
@@ -59,11 +59,13 @@ class ChatBubble extends StatelessWidget {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(14),
                       child: Image.memory(
-                        base64Decode(message.imageBase64!),
+                        message.decodedImageBytes!,
                         width: double.infinity,
                         height: 200,
                         fit: BoxFit.cover,
+                        gaplessPlayback: true,
                         errorBuilder: (_, __, ___) => Container(
+
                           height: 100,
                           decoration: BoxDecoration(
                             color: isDark

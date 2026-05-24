@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'firebase_options.dart';
+// import 'firebase_options.dart';
 import 'controllers/settings_controller.dart';
 import 'controllers/cloud_model_controller.dart';
 import 'controllers/server_controller.dart';
@@ -46,9 +46,9 @@ void main() {
 
     // Initialize Firebase before any Firebase-dependent services
     try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
+      // await Firebase.initializeApp(
+      //   options: DefaultFirebaseOptions.currentPlatform,
+      // );
     } catch (e) {
       appLog.error('[Firebase] Initialization failed', details: e);
     }

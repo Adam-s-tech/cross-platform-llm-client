@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <atomic>
 #include <ctime>
 #include <cstring>
@@ -20,6 +21,10 @@ static const llama_vocab* g_vocab = nullptr;
 static llama_sampler* g_sampler = nullptr;
 static std::atomic<bool> g_stop_flag{false};
 static int g_n_past = 0;  // Track the number of tokens already in KV cache
+// Exactly the tokens held in the KV cache (sequence 0), in order. Lets each
+// turn reuse the cached prefix it shares with the previous prompt + reply
+// instead of re-feeding (and duplicating) the whole conversation.
+static std::vector<llama_token> g_cached_tokens;
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
@@ -439,6 +444,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     
     // Reset KV cache position counter for new model
     g_n_past = 0;
+    g_cached_tokens.clear();
 
     // Report progress completion
     if (progress_callback) {
@@ -482,13 +488,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         return;
     }
 
-    // Clear memory from previous generation to start fresh
     const char* prompt_str = env->GetStringUTFChars(prompt, nullptr);
     g_stop_flag = false;
-    
+
+    // Never log prompt text: it is the user's conversation.
     const int prompt_len = strlen(prompt_str);
-    LOGI("Tokenizing prompt: '%s' (length: %d)", prompt_str, prompt_len);
-    LOGI("Vocab pointer: %p, Model pointer: %p", (void*)g_vocab, (void*)g_model);
 
     // Sanitize the UTF-8 string before tokenizing
     std::string sanitized_prompt = sanitizeUTF8(prompt_str, prompt_len);
@@ -520,45 +524,52 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
     const int n_ctx = llama_n_ctx(g_ctx);
 
-    // Check if the context will be exceeded and apply a sliding window for the KV cache
-    if (g_n_past + (int)tokens.size() > n_ctx) {
-        const int n_discard = n_ctx / 4; // Discard the oldest 25% of the context
-        LOGI("Context is full, shifting KV cache by %d tokens", n_discard);
-
-        // Remove the oldest tokens from the sequence
-        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
-        
-        // Shift the remaining tokens
-        llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past, -n_discard);
-
-        // Update the past tokens count
-        g_n_past -= n_discard;
+    // Leave room for the reply. If the conversation is longer than that, keep
+    // its start (system prompt) and its most recent part, dropping the middle.
+    const int reserve = (int)std::min<jlong>(std::max<jlong>(max_tokens, 64), n_ctx / 2);
+    const int budget = n_ctx - reserve;
+    if ((int)tokens.size() > budget) {
+        const int head = std::min(256, budget / 4);
+        std::vector<llama_token> trimmed(tokens.begin(), tokens.begin() + head);
+        trimmed.insert(trimmed.end(), tokens.end() - (budget - head), tokens.end());
+        LOGI("Prompt of %zu tokens trimmed to %d to fit context %d", tokens.size(), budget, n_ctx);
+        tokens.swap(trimmed);
     }
+
+    // Reuse the cached prefix shared with what's already in the KV cache;
+    // drop everything after it. At least one token must be decoded so the
+    // last position has logits to sample from.
+    size_t n_keep = 0;
+    while (n_keep < g_cached_tokens.size() && n_keep < tokens.size() &&
+           g_cached_tokens[n_keep] == tokens[n_keep]) {
+        n_keep++;
+    }
+    if (n_keep >= tokens.size()) n_keep = tokens.size() - 1;
+    llama_memory_seq_rm(llama_get_memory(g_ctx), 0, (llama_pos)n_keep, -1);
+    g_cached_tokens.resize(n_keep);
+    g_n_past = (int)n_keep;
+    LOGI("Prompt: %zu tokens, %zu reused from cache, %zu to process",
+         tokens.size(), n_keep, tokens.size() - n_keep);
 
     // Process prompt in batches to handle long inputs
     const int max_batch_size = 512;
-    int tokens_processed = 0;
-    
+    int tokens_processed = (int)n_keep;
+
     llama_batch batch = llama_batch_init(max_batch_size, 0, 1);
 
-    LOGI("Context size: %d", llama_n_ctx(g_ctx));
-
-    while (tokens_processed < tokens.size()) {
+    while (tokens_processed < (int)tokens.size()) {
         batch.n_tokens = 0;
         int batch_size = std::min((int)tokens.size() - tokens_processed, max_batch_size);
 
         for (int i = 0; i < batch_size; i++) {
             batch.token[batch.n_tokens] = tokens[tokens_processed + i];
-            batch.pos[batch.n_tokens] = g_n_past + tokens_processed + i;
+            batch.pos[batch.n_tokens] = tokens_processed + i;
             batch.n_seq_id[batch.n_tokens] = 1;
             batch.seq_id[batch.n_tokens][0] = 0;
-            batch.logits[batch.n_tokens] = (tokens_processed + i == tokens.size() - 1);
+            batch.logits[batch.n_tokens] = (tokens_processed + i == (int)tokens.size() - 1);
             batch.n_tokens++;
         }
 
-        LOGI("Decoding batch starting at position %d with %d tokens", g_n_past + tokens_processed, batch.n_tokens);
-
-        LOGI("Decoding batch: g_n_past=%d, batch_size=%d", g_n_past + tokens_processed, batch.n_tokens);
         int decode_result = llama_decode(g_ctx, batch);
         if (decode_result != 0) {
             LOGE("❌ DECODE FAILED! Result code: %d", decode_result);
@@ -570,10 +581,9 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         tokens_processed += batch_size;
     }
 
-    LOGI("✅ Decode successful! Processed %d total tokens", tokens_processed);
-
-    // Update position counter after decoding the whole prompt
-    g_n_past += tokens.size();
+    // The KV cache now holds exactly the prompt.
+    g_n_past = (int)tokens.size();
+    g_cached_tokens = tokens;
 
     // Create sampler chain with all parameters
     if (g_sampler) {
@@ -643,10 +653,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // Generation loop
     LOGI("Starting generation loop: max_tokens=%lld", max_tokens);
     for (int i = 0; i < max_tokens && !g_stop_flag; i++) {
-        // Sample next token
-        LOGI("Sampling token %d, g_n_past=%d", i + 1, g_n_past);
         llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
-        LOGI("Sampled token: %d", new_token_id);
 
         // Check for end of generation (EOS/EOD tokens)
         if (llama_vocab_is_eog(g_vocab, new_token_id)) {
@@ -686,6 +693,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         
         // Update position counter after each generated token
         g_n_past++;
+        g_cached_tokens.push_back(new_token_id);
     }
     LOGI("Generation loop finished.");
 
@@ -727,6 +735,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeFreeMo
     }
     g_vocab = nullptr;
     g_n_past = 0;  // Reset position counter
+    g_cached_tokens.clear();
     
     LOGI("Model freed");
 }
@@ -755,6 +764,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeClearC
     if (mem) {
         llama_memory_seq_rm(mem, 0, 0, -1);
         g_n_past = 0;
+        g_cached_tokens.clear();
         LOGI("Context cleared, g_n_past reset to 0");
     } else {
         LOGE("Failed to get memory object from context");

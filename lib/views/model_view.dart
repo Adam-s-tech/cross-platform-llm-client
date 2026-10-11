@@ -793,7 +793,7 @@ class ModelView extends GetView<ModelController> {
                 ),
                 TextButton(
                   onPressed: () => controller.pauseDownload(dp.filename),
-                  child: Text('Pause',
+                  child: Text(controller.canPauseDownloads ? 'Pause' : 'Cancel',
                       style: GoogleFonts.inter(
                           fontSize: 12, color: AppColors.warning)),
                 ),
@@ -2436,8 +2436,12 @@ class ModelView extends GetView<ModelController> {
               const Spacer(),
               TextButton.icon(
                 onPressed: () => controller.pauseDownload(model.filename),
-                icon: const Icon(Icons.close, size: 16),
-                label: const Text('Cancel'),
+                icon: Icon(
+                    controller.canPauseDownloads
+                        ? Icons.pause_rounded
+                        : Icons.close,
+                    size: 16),
+                label: Text(controller.canPauseDownloads ? 'Pause' : 'Cancel'),
                 style: TextButton.styleFrom(foregroundColor: AppColors.error),
               ),
             ],

@@ -460,6 +460,10 @@ class ModelController extends GetxController {
     }
   }
 
+  /// Android's DownloadManager offers no pause API, so stopping there cancels
+  /// the download; elsewhere progress is kept and the next download resumes.
+  bool get canPauseDownloads => !Platform.isAndroid;
+
   void pauseDownload(String filename) {
     _download.pauseDownload(filename);
   }
@@ -571,14 +575,21 @@ class ModelController extends GetxController {
         const taesdFilename = 'taesd.safetensors';
         const taesdUrl = 'https://huggingface.co/madebyollin/taesd/resolve/main/diffusion_pytorch_model.safetensors';
         final hasTaesd = await _download.isModelDownloaded(taesdFilename);
-        if (!hasTaesd) {
+        if (!hasTaesd &&
+            !_download.activeDownloads.containsKey(taesdFilename)) {
           print('[ModelController] TAESD not found, downloading...');
+          // On Android this only starts a background download and returns
+          // immediately, so the file may not exist yet.
           await _download.downloadModel(url: taesdUrl, filename: taesdFilename);
-          print('[ModelController] TAESD downloaded successfully');
-        } else {
-          print('[ModelController] TAESD already present');
         }
-        taesdPath = await _download.modelPath(taesdFilename);
+        // Only hand sd.cpp a TAESD path that is fully on disk; a missing
+        // file makes the whole model load fail on every backend.
+        if (await _download.isModelDownloaded(taesdFilename)) {
+          taesdPath = await _download.modelPath(taesdFilename);
+          print('[ModelController] Using TAESD for fast decode');
+        } else {
+          print('[ModelController] TAESD not ready yet, using standard VAE');
+        }
       } catch (e) {
         print('[ModelController] TAESD download failed (will use standard VAE): $e');
       }
@@ -1394,14 +1405,30 @@ class ModelController extends GetxController {
     return result ?? false;
   }
 
+  /// Removes `.part` files left behind by imports or download finalisation
+  /// that crashed. Several writers use `.part` concurrently (Android import,
+  /// download finalise, desktop/iOS import), and this runs on every refresh,
+  /// so only delete files that no active job owns and that haven't been
+  /// written to recently; deleting a live one corrupts that download.
   Future<void> _deletePartialImports() async {
+    const staleAfter = Duration(minutes: 10);
     try {
       final dir = Directory(await _download.modelsDir);
       if (!await dir.exists()) return;
+      final busy = {
+        ..._download.activeDownloads.keys,
+        if (isImporting.value) importFileName.value,
+      };
       await for (final entity in dir.list()) {
-        if (entity is File && entity.path.toLowerCase().endsWith('.part')) {
-          await entity.delete();
+        if (entity is! File || !entity.path.toLowerCase().endsWith('.part')) {
+          continue;
         }
+        final name = entity.uri.pathSegments.last;
+        final target = name.substring(0, name.length - '.part'.length);
+        if (busy.contains(target)) continue;
+        final age = DateTime.now().difference(await entity.lastModified());
+        if (age < staleAfter) continue;
+        await entity.delete();
       }
     } catch (_) {}
   }

@@ -94,63 +94,105 @@ Future<int> getRemoteFileSize(String url, {String? authToken}) async {
   return 0;
 }
 
+/// Suffix for in-progress downloads. Distinct from the `.part` files used by
+/// imports, so stale-import cleanup never touches a paused download.
+const partialDownloadSuffix = '.download';
+
+/// How long a download may go without receiving data before it fails.
+Duration receiveIdleTimeout = const Duration(seconds: 60);
+
+/// Resumable download. Bytes received so far are kept in
+/// `<savePath>.download`; calling this again after a pause (or a dropped
+/// connection) continues from where it stopped using an HTTP Range request.
+/// Returns the saved path, or `'PAUSED'` if [pauseDownload] stopped it.
 Future<String> downloadModel({
   required String url,
   required String savePath,
   String? authToken,
   void Function(int received, int total)? onProgress,
 }) async {
-  final tempPath = '$savePath.part';
+  final partial = File('$savePath$partialDownloadSuffix');
   final cancelToken = CancelToken();
   final filename = savePath.split('/').last;
   _cancelTokens[filename] = cancelToken;
-  var expectedTotalBytes = 0;
+  RandomAccessFile? sink;
 
   try {
-    final tempFile = File(tempPath);
-    final oldTempFile = File('$savePath.tmp');
-    if (await oldTempFile.exists()) {
-      await oldTempFile.delete();
-    }
-    if (await tempFile.exists()) {
-      await tempFile.delete();
+    // Leftovers from older app versions can't be resumed safely.
+    for (final legacy in [File('$savePath.tmp'), File('$savePath.part')]) {
+      if (await legacy.exists()) await legacy.delete();
     }
 
+    var existing = await partial.exists() ? await partial.length() : 0;
     final headers = <String, dynamic>{};
     if (authToken != null && authToken.isNotEmpty) {
       headers['Authorization'] = 'Bearer $authToken';
     }
+    if (existing > 0) headers['Range'] = 'bytes=$existing-';
 
-    await _dio.download(
+    final response = await _dio.get<ResponseBody>(
       url,
-      tempPath,
       cancelToken: cancelToken,
-      deleteOnError: false,
       options: Options(
         headers: headers,
         responseType: ResponseType.stream,
         followRedirects: true,
+        // Idle timeout between chunks: a stalled connection fails (keeping
+        // the partial file for resume) instead of hanging forever.
+        receiveTimeout: receiveIdleTimeout,
+        validateStatus: (s) => s != null && (s < 300 || s == 416),
       ),
-      onReceiveProgress: (received, total) {
-        if (total > 0) {
-          expectedTotalBytes = total;
-        }
-        onProgress?.call(received, total > 0 ? total : 0);
-      },
     );
 
-    final downloadedBytes = await tempFile.length();
-    if (expectedTotalBytes > 0 && downloadedBytes < expectedTotalBytes) {
-      await tempFile.delete();
-      throw Exception(
-        'Downloaded file is incomplete: $downloadedBytes of $expectedTotalBytes bytes.',
+    if (response.statusCode == 416) {
+      // Our partial file doesn't match the remote one (it changed, or we
+      // already have every byte). Start over rather than guess.
+      await partial.delete();
+      _cancelTokens.remove(filename);
+      return downloadModel(
+        url: url,
+        savePath: savePath,
+        authToken: authToken,
+        onProgress: onProgress,
       );
     }
-    final finalFile = File(savePath);
-    if (await finalFile.exists()) {
-      await finalFile.delete();
+
+    // 206 = server honoured the Range; anything else is the whole file.
+    final resumed = response.statusCode == 206;
+    if (!resumed) existing = 0;
+    final total = resumed
+        ? _totalFromContentRange(response.headers.value('content-range'))
+        : int.tryParse(
+                response.headers.value(Headers.contentLengthHeader) ?? '') ??
+            0;
+
+    sink = await partial.open(mode: resumed ? FileMode.append : FileMode.write);
+    var received = existing;
+    onProgress?.call(received, total);
+    await for (final chunk in response.data!.stream) {
+      await sink.writeFrom(chunk);
+      received += chunk.length;
+      onProgress?.call(received, total);
     }
-    await tempFile.rename(savePath);
+    await sink.close();
+    sink = null;
+
+    final downloadedBytes = await partial.length();
+    if (total > 0 && downloadedBytes < total) {
+      // Keep the partial file so the next attempt resumes.
+      throw Exception(
+        'Download was interrupted at $downloadedBytes of $total bytes. '
+        'Tap download again to resume.',
+      );
+    }
+    if (total > 0 && downloadedBytes > total) {
+      await partial.delete();
+      throw Exception('Downloaded file is larger than expected; please retry.');
+    }
+
+    final finalFile = File(savePath);
+    if (await finalFile.exists()) await finalFile.delete();
+    await partial.rename(savePath);
 
     if (savePath.toLowerCase().endsWith('.zip')) {
       final modelsDir = finalFile.parent.path;
@@ -161,16 +203,24 @@ Future<String> downloadModel({
     _cancelTokens.remove(filename);
     return savePath;
   } on DioException catch (e) {
-    if (e.type == DioExceptionType.cancel) {
-      _cancelTokens.remove(filename);
-      return 'PAUSED';
-    }
     _cancelTokens.remove(filename);
-    throw Exception('Download failed: ${e.message}');
+    if (e.type == DioExceptionType.cancel) return 'PAUSED';
+    throw Exception(
+        'Download failed: ${e.message}. Tap download again to resume.');
   } catch (e) {
     _cancelTokens.remove(filename);
     rethrow;
+  } finally {
+    await sink?.close();
   }
+}
+
+/// Parses the total size from a `Content-Range: bytes 100-199/1234` header.
+int _totalFromContentRange(String? header) {
+  if (header == null) return 0;
+  final slash = header.lastIndexOf('/');
+  if (slash < 0) return 0;
+  return int.tryParse(header.substring(slash + 1).trim()) ?? 0;
 }
 
 void pauseDownload(String filename) {
@@ -182,6 +232,8 @@ Future<void> deleteModel(String path) async {
   if (await file.exists()) await file.delete();
   final partFile = File('$path.part');
   if (await partFile.exists()) await partFile.delete();
+  final partialDownload = File('$path$partialDownloadSuffix');
+  if (await partialDownload.exists()) await partialDownload.delete();
   final tempFile = File('$path.tmp');
   if (await tempFile.exists()) await tempFile.delete();
 }

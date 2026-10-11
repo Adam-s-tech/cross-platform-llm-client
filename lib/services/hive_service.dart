@@ -19,11 +19,16 @@ class HiveService extends GetxService {
     _tasksBox = await Hive.openBox(AppConstants.tasksBox);
     _settingsBox = await Hive.openBox(AppConstants.settingsBox);
     // Preserve current local-server settings and purge obsolete provider data.
+    // Any new server_* setting must be added here or it is wiped on launch.
+    const currentServerKeys = {
+      AppConstants.keyServerApiKey,
+      AppConstants.keyServerUseApiKey,
+      AppConstants.keyServerAllowNetwork,
+    };
     final obsoleteServerKeys = _settingsBox.keys.where((key) =>
         key is String &&
         key.startsWith('server_') &&
-        key != AppConstants.keyServerApiKey &&
-        key != AppConstants.keyServerUseApiKey);
+        !currentServerKeys.contains(key));
     await _settingsBox.deleteAll(obsoleteServerKeys);
     return this;
   }

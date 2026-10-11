@@ -141,7 +141,7 @@ class ServerView extends GetView<ServerController> {
               _switchTile(isDark,
                   title: 'Require API key',
                   subtitle: controller.allowNetwork.value
-                      ? 'Always required for network access'
+                      ? 'Always on with network access. Turn that off to make the key optional.'
                       : 'Authorization: Bearer <key>',
                   value: controller.requiresApiKey,
                   onChanged: controller.allowNetwork.value

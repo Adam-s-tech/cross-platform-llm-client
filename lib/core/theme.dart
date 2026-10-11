@@ -155,8 +155,13 @@ class AppTheme {
           return isDark ? const Color(0xFF8E8E93) : Colors.white;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) return isDark ? const Color(0xFF34C759) : const Color(0xFF34C759);
-          return isDark ? const Color(0xFF39393D) : const Color(0xFFD1D1D6);
+          final color = states.contains(WidgetState.selected)
+              ? const Color(0xFF34C759)
+              : (isDark ? const Color(0xFF39393D) : const Color(0xFFD1D1D6));
+          // Fade locked switches so they don't look interactive.
+          return states.contains(WidgetState.disabled)
+              ? color.withValues(alpha: 0.4)
+              : color;
         }),
         trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
       ),

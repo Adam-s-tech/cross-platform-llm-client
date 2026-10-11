@@ -124,12 +124,29 @@ class ServerView extends GetView<ServerController> {
             _sectionLabel(context, 'SECURITY'),
             _groupedCard(isDark, children: [
               _switchTile(isDark,
+                  title: 'Allow network access',
+                  subtitle: controller.allowNetwork.value
+                      ? 'Reachable from other devices on your network'
+                      : 'Only apps on this device can connect',
+                  value: controller.allowNetwork.value,
+                  onChanged: controller.isStarting.value
+                      ? null
+                      : (v) => controller.setAllowNetwork(v)),
+              Divider(
+                  height: 0.5,
+                  indent: 16,
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.06)
+                      : Colors.black.withValues(alpha: 0.06)),
+              _switchTile(isDark,
                   title: 'Require API key',
-                  subtitle: 'Authorization: Bearer <key>',
-                  value: controller.useApiKey.value, onChanged: (v) {
-                controller.useApiKey.value = v;
-                controller.saveSettings();
-              }),
+                  subtitle: controller.allowNetwork.value
+                      ? 'Always required for network access'
+                      : 'Authorization: Bearer <key>',
+                  value: controller.requiresApiKey,
+                  onChanged: controller.allowNetwork.value
+                      ? null
+                      : (v) => controller.setUseApiKey(v)),
               Divider(
                   height: 0.5,
                   indent: 16,
@@ -142,10 +159,13 @@ class ServerView extends GetView<ServerController> {
                     Expanded(
                         child: TextField(
                       controller: controller.apiKeyCtrl,
-                      onChanged: (v) => controller.apiKey.value = v,
+                      onChanged: controller.onApiKeyEdited,
                       onSubmitted: (_) => controller.saveSettings(),
-                      decoration: const InputDecoration(
-                          labelText: 'API key', hintText: 'Optional'),
+                      decoration: InputDecoration(
+                          labelText: 'API key',
+                          hintText: controller.requiresApiKey
+                              ? 'Required'
+                              : 'Optional'),
                     )),
                     const SizedBox(width: 6),
                     IconButton(
@@ -198,7 +218,7 @@ class ServerView extends GetView<ServerController> {
                           _codeBlock(context, isDark, 'Chat completion',
                               'curl ${controller.baseUrl}/v1/chat/completions \\\n  -H "Content-Type: application/json"${_authHeader()} \\\n  -d \'{"model":"${controller.inference.loadedModelName.value}","messages":[{"role":"user","content":"Hello"}]}\''),
                           _codeBlock(context, isDark, 'Python SDK',
-                              'from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${controller.baseUrl}/v1",\n    api_key="${controller.useApiKey.value ? controller.apiKey.value : "not-needed"}"\n)\n\nresponse = client.chat.completions.create(\n    model="${controller.inference.loadedModelName.value}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(response.choices[0].message.content)'),
+                              'from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${controller.baseUrl}/v1",\n    api_key="${controller.requiresApiKey ? controller.apiKey.value : "not-needed"}"\n)\n\nresponse = client.chat.completions.create(\n    model="${controller.inference.loadedModelName.value}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(response.choices[0].message.content)'),
                         ])),
               ]),
             ],
@@ -256,7 +276,7 @@ class ServerView extends GetView<ServerController> {
       {required String title,
       required String subtitle,
       required bool value,
-      required ValueChanged<bool> onChanged}) {
+      required ValueChanged<bool>? onChanged}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(children: [
@@ -333,7 +353,7 @@ class ServerView extends GetView<ServerController> {
   }
 
   String _authHeader() {
-    if (controller.useApiKey.value && controller.apiKey.value.isNotEmpty) {
+    if (controller.requiresApiKey && controller.apiKey.value.isNotEmpty) {
       return ' \\\n  -H "Authorization: Bearer ${controller.apiKey.value}"';
     }
     return '';

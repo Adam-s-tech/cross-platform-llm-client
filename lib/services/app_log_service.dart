@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import '../core/redact.dart';
 import 'crash_reporting_service.dart';
 
 class AppLogEntry {
@@ -47,13 +48,16 @@ class AppLogService extends GetxService {
     _add('DEBUG', message, details);
   }
 
-  void _add(String level, String message, Object? details) {
+  void _add(String level, String rawMessage, Object? details) {
+    // Error text can embed request URLs or headers; never keep keys in logs.
+    final message = redactSecrets(rawMessage);
+    final detailText = details == null ? null : redactSecrets('$details');
     entries.insert(
       0,
       AppLogEntry(
         level: level,
         message: message,
-        details: details?.toString(),
+        details: detailText,
       ),
     );
     if (entries.length > 200) {

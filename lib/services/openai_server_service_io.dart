@@ -22,7 +22,7 @@ class OpenAiServerService {
     final port = _server?.port;
     if (port == null) return null;
     final host = _lastReachableAddress;
-    return 'http://${host ?? 'localhost'}:$port';
+    return 'http://${host ?? '127.0.0.1'}:$port';
   }
 
   String? _lastReachableAddress;
@@ -30,18 +30,34 @@ class OpenAiServerService {
   static const int maxBodyBytes = 18 * 1024 * 1024;
   static const int maxDecodedAttachmentBytes = 12 * 1024 * 1024;
 
+  /// When [allowNetwork] is false the server only listens on loopback, so it
+  /// is reachable from this device only. Network mode must be paired with an
+  /// API key; the caller is responsible for supplying one.
   Future<void> start({
     int port = 8080,
     String? apiKey,
+    bool allowNetwork = false,
     void Function(String)? onLog,
   }) async {
     if (_server != null) return;
-    _apiKey = apiKey?.trim();
+    if (allowNetwork && (apiKey == null || apiKey.trim().isEmpty)) {
+      throw ArgumentError('An API key is required for network access.');
+    }
+    updateApiKey(apiKey);
     _onLog = onLog;
-    _lastReachableAddress = await _reachableIpv4Address();
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+    _lastReachableAddress = allowNetwork ? await _reachableIpv4Address() : null;
+    _server = await HttpServer.bind(
+      allowNetwork ? InternetAddress.anyIPv4 : InternetAddress.loopbackIPv4,
+      port,
+    );
     _onLog?.call('Server listening on ${localUrl ?? 'http://localhost:$port'}');
     unawaited(_serve(_server!));
+  }
+
+  /// Applies a new API key to the running server without a restart.
+  void updateApiKey(String? apiKey) {
+    final key = apiKey?.trim();
+    _apiKey = (key == null || key.isEmpty) ? null : key;
   }
 
   Future<void> stop() async {
@@ -79,6 +95,15 @@ class OpenAiServerService {
         return;
       }
 
+      // Requiring a JSON content type forces browsers to send a CORS
+      // preflight, so web pages can't fire "simple" cross-origin requests.
+      if (request.method == 'POST' &&
+          request.headers.contentType?.mimeType != ContentType.json.mimeType) {
+        await _json(request, {'error': 'Content-Type must be application/json'},
+            status: HttpStatus.unsupportedMediaType);
+        return;
+      }
+
       if (request.method == 'GET' && path == '/v1/models') {
         await _handleModels(request);
         return;
@@ -102,7 +127,7 @@ class OpenAiServerService {
       try {
         await _json(
           request,
-          {'error': 'Internal server error', 'message': '$error'},
+          {'error': 'Internal server error'},
           status: HttpStatus.internalServerError,
         );
       } catch (_) {
@@ -115,7 +140,17 @@ class OpenAiServerService {
     final key = _apiKey;
     if (key == null || key.isEmpty) return true;
     final header = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
-    return header.trim() == 'Bearer $key';
+    return _constantTimeEquals(header.trim(), 'Bearer $key');
+  }
+
+  static bool _constantTimeEquals(String a, String b) {
+    final x = utf8.encode(a);
+    final y = utf8.encode(b);
+    var diff = x.length ^ y.length;
+    for (var i = 0; i < x.length && i < y.length; i++) {
+      diff |= x[i] ^ y[i];
+    }
+    return diff == 0;
   }
 
   Future<void> _handleModels(HttpRequest request) async {
@@ -548,6 +583,9 @@ class OpenAiServerService {
   }
 
   void _addCorsHeaders(HttpResponse response) {
+    // Only allow browser access when a key is required, so an arbitrary web
+    // page can't read model output from an open server.
+    if (_apiKey == null) return;
     response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
     response.headers
         .set(HttpHeaders.accessControlAllowMethodsHeader, 'GET,POST,OPTIONS');

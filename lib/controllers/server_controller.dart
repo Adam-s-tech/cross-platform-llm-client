@@ -25,6 +25,10 @@ class ServerController extends GetxController {
   final useApiKey = false.obs;
   final apiKey = ''.obs;
 
+  /// Off by default: the server only listens on this device. When on, other
+  /// devices on the network can reach it and an API key is always required.
+  final allowNetwork = false.obs;
+
   late final TextEditingController apiKeyCtrl;
 
   static const int port = 8080;
@@ -35,8 +39,17 @@ class ServerController extends GetxController {
     useApiKey.value =
         _hive.getSetting<bool>(AppConstants.keyServerUseApiKey) ?? false;
     apiKey.value = _hive.getSetting<String>(AppConstants.keyServerApiKey) ?? '';
+    allowNetwork.value =
+        _hive.getSetting<bool>(AppConstants.keyServerAllowNetwork) ?? false;
 
     apiKeyCtrl = TextEditingController(text: apiKey.value);
+  }
+
+  bool get requiresApiKey => allowNetwork.value || useApiKey.value;
+
+  String? get _effectiveApiKey {
+    final key = apiKey.value.trim();
+    return requiresApiKey && key.isNotEmpty ? key : null;
   }
 
   bool get hasLocalModel => inference.isModelLoaded.value;
@@ -69,7 +82,8 @@ class ServerController extends GetxController {
     try {
       await _server.start(
         port: port,
-        apiKey: useApiKey.value ? apiKey.value : null,
+        apiKey: _effectiveApiKey,
+        allowNetwork: allowNetwork.value,
         onLog: (message) => serverStatus.value = message,
       );
       localUrl.value = _server.localUrl;
@@ -93,18 +107,60 @@ class ServerController extends GetxController {
     serverStatus.value = 'Server stopped';
   }
 
+  /// Persists settings and applies the key to a running server. A required
+  /// but empty key is replaced with a generated one so auth is never
+  /// silently disabled.
   Future<void> saveSettings() async {
+    if (requiresApiKey && apiKey.value.trim().isEmpty) {
+      _setApiKey(_newApiKey());
+    }
     await _hive.setSetting(AppConstants.keyServerUseApiKey, useApiKey.value);
     await _hive.setSetting(AppConstants.keyServerApiKey, apiKey.value.trim());
+    await _hive.setSetting(
+        AppConstants.keyServerAllowNetwork, allowNetwork.value);
+    _server.updateApiKey(_effectiveApiKey);
+  }
+
+  Future<void> setUseApiKey(bool enabled) async {
+    if (!enabled && allowNetwork.value) return;
+    useApiKey.value = enabled;
+    await saveSettings();
+  }
+
+  Future<void> setAllowNetwork(bool enabled) async {
+    allowNetwork.value = enabled;
+    await saveSettings();
+    if (isRunning.value) {
+      // Switching between loopback and all interfaces needs a rebind.
+      await stopServer();
+      await startServer();
+    }
+  }
+
+  void onApiKeyEdited(String value) {
+    apiKey.value = value;
+    // Don't push an empty key while one is required; saveSettings will
+    // generate a replacement when the field is submitted.
+    if (!requiresApiKey || value.trim().isNotEmpty) {
+      _server.updateApiKey(_effectiveApiKey);
+    }
   }
 
   Future<void> generateApiKey() async {
-    final random = Random.secure();
-    final bytes = List<int>.generate(24, (_) => random.nextInt(256));
-    apiKey.value =
-        'aichat_${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
+    _setApiKey(_newApiKey());
     useApiKey.value = true;
     await saveSettings();
+  }
+
+  void _setApiKey(String key) {
+    apiKey.value = key;
+    apiKeyCtrl.text = key;
+  }
+
+  String _newApiKey() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(24, (_) => random.nextInt(256));
+    return 'aichat_${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
   }
 
   Future<void> copyText(String text, String label) async {

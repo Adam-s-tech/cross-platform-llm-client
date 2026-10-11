@@ -338,12 +338,16 @@ class CloudService extends GetxService {
       });
     }
 
-    final url =
-        '${AppConstants.googleEndpoint}/$_model:generateContent?key=$_apiKey';
+    // Key goes in a header, not the URL, so it can't leak via exception
+    // messages (http's ClientException includes the full URI).
+    final url = '${AppConstants.googleEndpoint}/$_model:generateContent';
 
     final response = await http.post(
       Uri.parse(url),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': _apiKey,
+      },
       body: jsonEncode({
         'contents': [
           {'parts': parts}

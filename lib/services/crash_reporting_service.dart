@@ -9,6 +9,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../controllers/chat_controller.dart';
 import '../controllers/settings_controller.dart';
+import '../core/redact.dart';
 import '../ffi/sd_ffi_bindings.dart';
 import 'app_log_service.dart';
 import 'device_info_service.dart';
@@ -57,9 +58,9 @@ class CrashReportingService extends GetxService {
     if (!_enabled) return;
     await updateContext(reason: reason);
     await FirebaseCrashlytics.instance.recordError(
-      error,
+      _redactError(error),
       stack,
-      reason: reason,
+      reason: redactSecrets(reason),
       fatal: true,
     );
   }
@@ -75,9 +76,9 @@ class CrashReportingService extends GetxService {
     try {
       await updateContext(reason: reason, extra: extra);
       await FirebaseCrashlytics.instance.recordError(
-        error,
+        _redactError(error),
         stack ?? StackTrace.current,
-        reason: reason,
+        reason: redactSecrets(reason),
         fatal: false,
       );
     } catch (e) {
@@ -90,7 +91,7 @@ class CrashReportingService extends GetxService {
 
   void log(String message) {
     if (!_enabled) return;
-    FirebaseCrashlytics.instance.log(_trim(message, 1000));
+    FirebaseCrashlytics.instance.log(_trim(redactSecrets(message), 1000));
   }
 
   Future<void> updateContext({
@@ -242,9 +243,17 @@ class CrashReportingService extends GetxService {
     } else if (safeValue is double) {
       await FirebaseCrashlytics.instance.setCustomKey(safeKey, safeValue);
     } else {
-      await FirebaseCrashlytics.instance
-          .setCustomKey(safeKey, _trim(safeValue.toString(), 900));
+      await FirebaseCrashlytics.instance.setCustomKey(
+          safeKey, _trim(redactSecrets(safeValue.toString()), 900));
     }
+  }
+
+  /// Keeps the original error object (for Crashlytics grouping) unless its
+  /// text contains a credential, in which case a masked string is sent.
+  Object _redactError(Object error) {
+    final text = error.toString();
+    final redacted = redactSecrets(text);
+    return redacted == text ? error : redacted;
   }
 
   String _safeName(String value) {

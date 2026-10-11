@@ -420,8 +420,10 @@ class CloudModelController extends GetxController {
           headers: {'Authorization': 'Bearer ${apiKeyFor(provider)}'},
         );
       case 'google':
-        return http.get(Uri.parse(
-            '${AppConstants.googleEndpoint}?key=${apiKeyFor(provider)}'));
+        return http.get(
+          Uri.parse(AppConstants.googleEndpoint),
+          headers: {'x-goog-api-key': apiKeyFor(provider)},
+        );
       case 'nvidia':
         return http.get(
           Uri.parse('${AppConstants.nvidiaEndpoint}/models'),

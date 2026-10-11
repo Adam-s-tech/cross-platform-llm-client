@@ -53,7 +53,7 @@ android {
     }
 
     defaultConfig {
-        minSdk = 26  // Android 8.0 (for SharedMemory support)
+        minSdk = 28  // Android 9: matches the app; needed for Vulkan 1.1 symbols
         
         ndk {
             abiFilters.addAll(listOf("arm64-v8a"))  // Only ARM64
@@ -73,7 +73,6 @@ android {
                     "-DANDROID_STL=c++_shared",
                     "-DANDROID_ARM_NEON=ON",
                     "-DGGML_CPU_AARCH64=ON",
-                    "-DGGML_DOTPROD=ON",
                     "-DGGML_OPENMP=OFF"
                 )
             }

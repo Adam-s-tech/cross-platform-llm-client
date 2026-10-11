@@ -31,6 +31,7 @@ class InferenceEngine {
     bool forceLiteRtCpu = true,
     bool clearLiteRtCache = false,
     bool enableLiteRtVision = false,
+    bool allowGgufGpu = false,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(

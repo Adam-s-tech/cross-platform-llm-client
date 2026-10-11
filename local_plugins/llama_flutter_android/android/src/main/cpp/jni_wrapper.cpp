@@ -7,7 +7,9 @@
 #include <fstream>
 #include <mutex>
 #include <android/log.h>
+#include <dlfcn.h>
 #include "llama.cpp/include/llama.h"
+#include "llama.cpp/ggml/include/ggml-backend.h"
 #define LOG_TAG "LlamaJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -21,6 +23,110 @@ static int g_n_past = 0;  // Track the number of tokens already in KV cache
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
+
+// ---------------------------------------------------------------------------
+// Runtime backend loading (GGML_BACKEND_DL)
+//
+// Backends ship as separate modules in the app's native library dir:
+//  - libggml-cpu-android_*.so, one per Arm generation. The fastest variant
+//    this CPU supports is loaded (each reports a score; 0 = unsupported).
+//  - libggml-vulkan.so, loaded only when the app explicitly allows the GPU.
+//    Merely registering it initialises Vulkan, which some drivers can't
+//    handle, so phones that aren't allowed GPU never load it at all.
+// ---------------------------------------------------------------------------
+static void androidLlamaLog(ggml_log_level level, const char* text, void*);
+
+static std::mutex g_backend_mutex;
+static std::string g_lib_dir;
+static bool g_cpu_backend_loaded = false;
+static bool g_gpu_backend_loaded = false;
+
+#ifdef LLAMA_JNI_BACKEND_DL
+// Best first. The armv9 (SVE2/SME) variants are deliberately excluded: on a
+// Pixel 8 (Tensor G3) the SVE2 repack path produced out-of-range values and
+// aborted on the first decode, so they aren't shipped or loaded.
+static const char* const kCpuVariants[] = {
+    "android_armv8.6_1", "android_armv8.2_2", "android_armv8.2_1",
+    "android_armv8.0_1",
+};
+
+static void loadCpuBackendLocked() {
+    if (g_cpu_backend_loaded) return;
+    std::string best_path;
+    std::string best_name;
+    int best_score = 0;
+    for (const char* variant : kCpuVariants) {
+        const std::string path = g_lib_dir + "/libggml-cpu-" + variant + ".so";
+        void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!handle) continue;
+        using score_fn = int (*)();
+        auto score = reinterpret_cast<score_fn>(dlsym(handle, "ggml_backend_score"));
+        const int value = score ? score() : 0;
+        dlclose(handle);
+        if (value > best_score) {
+            best_score = value;
+            best_path = path;
+            best_name = variant;
+        }
+    }
+    if (!best_path.empty() && ggml_backend_load(best_path.c_str())) {
+        g_cpu_backend_loaded = true;
+        LOGI("CPU backend: %s (score %d)", best_name.c_str(), best_score);
+    } else {
+        LOGE("No CPU backend could be loaded from %s", g_lib_dir.c_str());
+    }
+}
+
+static bool loadGpuBackendLocked() {
+    if (g_gpu_backend_loaded) return true;
+    const std::string path = g_lib_dir + "/libggml-vulkan.so";
+    if (ggml_backend_load(path.c_str())) {
+        g_gpu_backend_loaded = true;
+        LOGI("Vulkan backend loaded");
+    } else {
+        LOGE("Vulkan backend unavailable (%s)", path.c_str());
+    }
+    return g_gpu_backend_loaded;
+}
+#else
+static void loadCpuBackendLocked() { g_cpu_backend_loaded = true; }
+static bool loadGpuBackendLocked() { return false; }
+#endif
+
+static void ensureCpuBackend() {
+    std::lock_guard<std::mutex> lock(g_backend_mutex);
+    loadCpuBackendLocked();
+}
+
+/// First GPU device registered by a loaded backend, or nullptr.
+static ggml_backend_dev_t firstGpuDevice() {
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        const auto type = ggml_backend_dev_type(dev);
+        if (type == GGML_BACKEND_DEVICE_TYPE_GPU ||
+            type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            return dev;
+        }
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeInitBackends(
+        JNIEnv* env, jobject /* this */, jstring lib_dir, jboolean allow_gpu) {
+    std::lock_guard<std::mutex> lock(g_backend_mutex);
+    if (g_lib_dir.empty() && lib_dir) {
+        const char* dir = env->GetStringUTFChars(lib_dir, nullptr);
+        if (dir) {
+            g_lib_dir = dir;
+            env->ReleaseStringUTFChars(lib_dir, dir);
+        }
+    }
+    llama_log_set(androidLlamaLog, nullptr);
+    loadCpuBackendLocked();
+    if (allow_gpu == JNI_TRUE) loadGpuBackendLocked();
+    return g_gpu_backend_loaded && firstGpuDevice() != nullptr ? JNI_TRUE : JNI_FALSE;
+}
 
 static void androidLlamaLog(ggml_log_level level, const char* text, void*) {
     if (!text) return;
@@ -199,11 +305,28 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeDetect
     jlong defaults[2] = {-1L, -1L};
     env->SetLongArrayRegion(outStats, 0, 2, defaults);
 
-    // Vulkan GPU detection is disabled on Android to avoid driver crashes
-    // on older devices (e.g., Adreno 630). llama.cpp inference already runs
-    // on CPU (GGML_VULKAN=OFF), so GPU layers are not used anyway.
-    LOGI("nativeDetectGpu: skipped — CPU-only mode on Android");
-    return nullptr;
+    // Only reports a GPU if the app already allowed and loaded the Vulkan
+    // backend (nativeInitBackends); this never initialises Vulkan itself.
+    ggml_backend_dev_t dev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_backend_mutex);
+        if (!g_gpu_backend_loaded) {
+            LOGI("nativeDetectGpu: GPU backend not loaded");
+            return nullptr;
+        }
+        dev = firstGpuDevice();
+    }
+    if (!dev) {
+        LOGI("nativeDetectGpu: no Vulkan GPU device");
+        return nullptr;
+    }
+    size_t free_mem = 0, total_mem = 0;
+    ggml_backend_dev_memory(dev, &free_mem, &total_mem);
+    jlong stats[2] = {-1L, static_cast<jlong>(total_mem)};
+    env->SetLongArrayRegion(outStats, 0, 2, stats);
+    const char* desc = ggml_backend_dev_description(dev);
+    LOGI("nativeDetectGpu: %s (%zu MB)", desc, total_mem / (1024 * 1024));
+    return env->NewStringUTF(desc ? desc : "GPU");
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -246,9 +369,17 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     }
     model_file.close();
 
+    ensureCpuBackend();
+
     // Model parameters
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
+    // With no GPU layers requested, give llama.cpp an empty device list so
+    // it can't touch a GPU at all (even if the Vulkan backend is loaded).
+    static ggml_backend_dev_t no_gpu_devices[] = {nullptr};
+    if (n_gpu_layers == 0) {
+        model_params.devices = no_gpu_devices;
+    }
 
     llama_log_set(androidLlamaLog, nullptr);
     {
@@ -279,6 +410,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     
     // Memory optimization: reduce memory usage by limiting batch processing
     ctx_params.n_batch = 512;  // Process smaller batches to reduce memory spikes
+    // Don't push CPU-resident tensor ops to the GPU in CPU-only mode.
+    ctx_params.op_offload = n_gpu_layers != 0;
 
     // Create context (using new API)
     g_ctx = llama_init_from_model(g_model, ctx_params);

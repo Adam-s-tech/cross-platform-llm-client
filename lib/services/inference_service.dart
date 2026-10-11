@@ -104,6 +104,30 @@ class InferenceService extends GetxService {
       final shouldTryLiteRtGpu =
           isLiteRt && !forceLiteRtCpu && liteRtMode != 'cpu_safe';
 
+      // GGUF follows the same performance mode. A GGUF GPU run that never
+      // finished its first reply (app crashed in the GPU driver) is treated
+      // like a LiteRT GPU crash: Auto falls back to CPU until changed.
+      final ggufGpuPending = !isLiteRt &&
+          (_hive.getSetting<bool>(AppConstants.keyGgufGpuPending,
+                  defaultValue: false) ??
+              false);
+      if (ggufGpuPending) {
+        await _hive.setSetting(AppConstants.keyGgufGpuPending, false);
+        await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, true);
+      }
+      final ggufGpuCrashDetected = !isLiteRt &&
+          (_hive.getSetting<bool>(AppConstants.keyLiteRtGpuCrashDetected,
+                  defaultValue: false) ??
+              false);
+      final allowGgufGpu = !isLiteRt &&
+          liteRtMode != 'cpu_safe' &&
+          !(liteRtMode == 'auto_fast' && ggufGpuCrashDetected);
+      if (allowGgufGpu) {
+        // Set before GPU detection: initialising the Vulkan driver or
+        // loading onto the GPU can crash the process outright.
+        await _hive.setSetting(AppConstants.keyGgufGpuPending, true);
+      }
+
       await unloadModel();
       isLoadingModel.value = true;
       loadingModelName.value = modelName ?? modelPath.split('/').last;
@@ -142,6 +166,7 @@ class InferenceService extends GetxService {
             contextChanged,
         markLiteRtGpuPending: shouldTryLiteRtGpu,
         enableLiteRtVision: enableLiteRtVision,
+        allowGgufGpu: allowGgufGpu,
       );
 
       if (!result.success &&
@@ -165,6 +190,10 @@ class InferenceService extends GetxService {
       }
 
       if (!result.success) {
+        if (!isLiteRt) {
+          // A failed load returned normally (no crash): not a GPU crash.
+          await _hive.setSetting(AppConstants.keyGgufGpuPending, false);
+        }
         isModelLoaded.value = false;
         isLoadingModel.value = false;
         loadingModelName.value = '';
@@ -199,6 +228,12 @@ class InferenceService extends GetxService {
       if (isLiteRt && result.backend == 'gpu') {
         await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
       }
+      if (!isLiteRt && result.gpuLayers == 0) {
+        // Ended up on the CPU; nothing GPU-related left to verify.
+        await _hive.setSetting(AppConstants.keyGgufGpuPending, false);
+      }
+      // Otherwise the flag stays set until the first successful reply
+      // (see generate()), so a crash there is also caught.
       contextTokensUsed.value = 0;
       contextTokensTotal.value = finalContextSize;
 
@@ -353,6 +388,12 @@ class InferenceService extends GetxService {
         isGenerating.value = false;
         generationSource.value = '';
       }
+      if (gpuLayersUsed.value > 0 &&
+          !result.startsWith('ERROR') &&
+          result.trim().isNotEmpty) {
+        // The GPU survived a full reply: no longer suspected of crashing.
+        await _hive.setSetting(AppConstants.keyGgufGpuPending, false);
+      }
 
       // Detect Tensor SoC + Gemma Q4_K_M corruption: model outputs only
       // special tokens and terminates immediately with empty result.
@@ -449,6 +490,7 @@ class InferenceService extends GetxService {
     required bool clearLiteRtCache,
     required bool markLiteRtGpuPending,
     required bool enableLiteRtVision,
+    bool allowGgufGpu = false,
   }) async {
     var gpuLoadFailed = false;
     try {
@@ -465,6 +507,7 @@ class InferenceService extends GetxService {
         forceLiteRtCpu: forceLiteRtCpu,
         clearLiteRtCache: clearLiteRtCache,
         enableLiteRtVision: enableLiteRtVision,
+        allowGgufGpu: allowGgufGpu,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success ||

@@ -36,6 +36,14 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    packaging {
+        jniLibs {
+            // llama.cpp armv9 (SVE2/SME) CPU variants abort on some phones
+            // (Pixel 8); the loader never picks them, so don't ship them.
+            excludes += setOf("**/libggml-cpu-android_armv9*.so")
+        }
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17

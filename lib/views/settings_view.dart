@@ -405,7 +405,7 @@ class SettingsView extends GetView<SettingsController> {
       (
         value: 'auto_fast',
         title: 'Auto Fast',
-        subtitle: 'Try GPU first, then CPU fallback',
+        subtitle: 'GPU when supported, CPU fallback (also after a GPU crash)',
         icon: Icons.auto_awesome_rounded
       ),
       (

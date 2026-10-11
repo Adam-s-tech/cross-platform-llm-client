@@ -54,6 +54,7 @@ class InferenceEngine {
     bool forceLiteRtCpu = false,
     bool clearLiteRtCache = false,
     bool enableLiteRtVision = false,
+    bool allowGgufGpu = true,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
@@ -78,6 +79,9 @@ class InferenceEngine {
     String gpuNameStr = '';
 
     try {
+      if (!allowGgufGpu) {
+        throw StateError('GPU disabled by CPU Safe mode or a previous GPU crash');
+      }
       final gpu = await _controller!.detectGpu();
       gpuNameStr = gpu.gpuName;
 
@@ -86,19 +90,11 @@ class InferenceEngine {
       print('[Inference]   Free RAM: ${gpu.freeRamBytes ~/ 1024 ~/ 1024}MB');
       print('[Inference]   Recommended layers: ${gpu.recommendedGpuLayers}');
 
+      // The plugin decides eligibility (SoC/driver blocklist, free RAM);
+      // a crash on a GPU it allows is caught by InferenceService's guard.
       if (gpu.vulkanSupported && gpu.recommendedGpuLayers > 0) {
-        final gpuNum = _extractGpuModel(gpu.gpuName);
-        if (gpuNum >= 700) {
-          gpuLayers = 99;
-          print('[Inference] ✓ High-end GPU ($gpuNum) → full offload');
-        } else if (gpuNum >= 650) {
-          gpuLayers = gpu.recommendedGpuLayers;
-          print('[Inference] ✓ Upper-mid GPU ($gpuNum) → $gpuLayers layers');
-        } else {
-          gpuLayers = 0;
-          print(
-              '[Inference] Mid-range GPU ($gpuNum) — CPU is faster, skipping GPU');
-        }
+        gpuLayers = gpu.recommendedGpuLayers;
+        print('[Inference] ✓ GPU offload: $gpuLayers layers on ${gpu.gpuName}');
       }
     } catch (e) {
       print('[Inference] GPU detection failed: $e — CPU fallback');
@@ -735,10 +731,6 @@ class InferenceEngine {
 
   // ── Helpers ──
 
-  int _extractGpuModel(String gpuName) {
-    final match = RegExp(r'(\d{3})').firstMatch(gpuName.toLowerCase());
-    return match != null ? (int.tryParse(match.group(1)!) ?? 0) : 0;
-  }
 
   /// Safety cap on a single generation. It scales with the token budget
   /// (allowing ~1 token/s) so slow phones aren't cut off mid-answer; the idle

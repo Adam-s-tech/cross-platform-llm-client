@@ -43,6 +43,9 @@ class AppConstants {
       'litert_gpu_warning_accepted';
   static const String keyLiteRtGpuLoadPending = 'litert_gpu_load_pending';
   static const String keyLiteRtGpuCrashDetected = 'litert_gpu_crash_detected';
+  /// Set while a GGUF model runs on the GPU until its first reply succeeds;
+  /// still set on the next load means the GPU crashed the app.
+  static const String keyGgufGpuPending = 'gguf_gpu_pending';
   static const String keyImageModelPath = 'image_model_path';
   static const String keyImageModelName = 'image_model_name';
   static const String keyTemperature = 'temperature';

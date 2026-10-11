@@ -3,6 +3,7 @@ package com.write4me.llama_flutter_android
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -341,6 +342,13 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
 
         scope.launch {
             try {
+                // Loading the Vulkan backend initialises the driver, so skip it
+                // entirely on devices where that step itself is risky.
+                if (isGpuEligibleSoc()) {
+                    nativeInitBackends(context.applicationInfo.nativeLibraryDir, true)
+                } else {
+                    Log.i(TAG, "GPU offload not enabled for SoC ${socDescription()}")
+                }
                 val outStats = LongArray(2) { -1L }
                 val gpuName: String? = nativeDetectGpu(outStats)
                 val vulkanSupported = gpuName != null
@@ -389,6 +397,9 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
 
         return try {
             System.loadLibrary("llama_jni")
+            // Load the CPU backend now; the GPU backend is only loaded on
+            // request by detectGpu() for eligible devices.
+            nativeInitBackends(context.applicationInfo.nativeLibraryDir, false)
             null
         } catch (t: Throwable) {
             nativeLoadError = t
@@ -396,6 +407,44 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             IllegalStateException("Failed to load llama native library: ${t.message}", t)
         }
     }
+
+    /**
+     * Coarse pre-Vulkan check, using only SoC info (no GPU driver touched):
+     * Android 12+ (older Vulkan drivers are the ones that crash on init) and
+     * not a Unisoc budget SoC (PowerVR / old Mali). Individual GPUs are then
+     * filtered by name in [computeRecommendedLayers].
+     */
+    private fun isGpuEligibleSoc(): Boolean {
+        // Tester override: create this file in the app's private files dir
+        // (needs adb run-as/root) to try the GPU on any device.
+        if (isGpuForced()) {
+            Log.w(TAG, "GPU eligibility overridden by force_gguf_gpu")
+            return true
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        val maker = Build.SOC_MANUFACTURER.lowercase()
+        return !(maker.contains("unisoc") || maker.contains("spreadtrum"))
+    }
+
+    /** GPUs whose Vulkan drivers are known to break llama.cpp. */
+    private fun isBlockedGpu(gpuName: String): Boolean {
+        val name = gpuName.lowercase()
+        if (name.contains("powervr") || name.contains("img ")) return true
+        if (name.contains("mali-t")) return true  // Midgard (pre-2016)
+        val adreno = Regex("adreno.*?(\\d{3})").find(name)
+        if (adreno != null) return adreno.groupValues[1].toInt() < 640
+        return false
+    }
+
+    private fun isGpuForced(): Boolean =
+        java.io.File(context.filesDir, "force_gguf_gpu").exists()
+
+    private fun socDescription(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}"
+        } else {
+            "unknown (API ${Build.VERSION.SDK_INT})"
+        }
 
     private fun computeRecommendedLayers(
         vulkanSupported: Boolean,
@@ -405,13 +454,13 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     ): Int {
         val GB = 1_073_741_824L
         val safeRam = (freeRamBytes * 0.7).toLong()
+        // Phone GPUs share system RAM (UMA), so offloading needs no extra
+        // memory and partial offload only adds CPU<->GPU traffic: all or none.
         return when {
             !vulkanSupported -> 0
-            gpuName.contains("Mali", ignoreCase = true) -> 0
-            safeRam < GB -> 0                                          // < 1 GB — truly too low
-            safeRam < 2 * GB && deviceLocalMemoryBytes < 3 * GB -> 0  // low RAM + low VRAM
-            safeRam < 3 * GB || deviceLocalMemoryBytes < 2 * GB -> 16 // partial offload
-            else -> 99                                                  // full offload
+            isBlockedGpu(gpuName) && !isGpuForced() -> 0
+            safeRam < GB -> 0 // too little free RAM for GPU buffers + driver
+            else -> 99
         }
     }
 
@@ -451,5 +500,6 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     private external fun nativeClearContext()
     private external fun nativeSetSystemPromptLength(length: Int)
     private external fun nativeDetectGpu(outStats: LongArray): String?
+    private external fun nativeInitBackends(libDir: String, allowGpu: Boolean): Boolean
     // outStats[0] = vulkanApiVersion, outStats[1] = deviceLocalMemoryBytes
 }

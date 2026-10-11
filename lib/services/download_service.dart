@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
@@ -16,7 +17,10 @@ class DownloadProgress {
   final RxInt totalBytes = 0.obs;
   final RxDouble bytesPerSecond = 0.0.obs;
   final RxBool isPaused = false.obs;
-  final DateTime startedAt = DateTime.now();
+  /// Human-readable state from the downloader ("Waiting to start...",
+  /// "Paused: waiting for network", ...); empty while simply downloading.
+  final RxString status = ''.obs;
+  DateTime startedAt = DateTime.now();
 
   DownloadProgress({required this.filename});
 
@@ -36,6 +40,8 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
   /// Currently active downloads.
   final activeDownloads = <String, DownloadProgress>{}.obs;
   final _nativeDownloadIds = <String, int>{};
+  // Kept so a stalled system download can be retried with our own downloader.
+  final _nativeDownloadUrls = <String, String>{};
 
   bool get isDownloadingAny => activeDownloads.isNotEmpty;
 
@@ -93,6 +99,8 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
           if (progress == null &&
               (status == 'Downloading...' ||
                   status == 'Downloading to phone...' ||
+                  status == 'Waiting to start...' ||
+                  status.startsWith('Paused') ||
                   status.startsWith('Importing'))) {
             progress = DownloadProgress(filename: filename);
             activeDownloads[filename] = progress;
@@ -101,6 +109,7 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
             progress.downloadedBytes.value = downloaded;
             progress.totalBytes.value = total;
             progress.bytesPerSecond.value = speed;
+            progress.status.value = status == 'Downloading...' ? '' : status;
             if (total > 0) {
               progress.progress.value = downloaded / total;
             }
@@ -108,14 +117,29 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
             if (status == 'Download complete') {
               activeDownloads.remove(filename);
               _nativeDownloadIds.remove(filename);
+              _nativeDownloadUrls.remove(filename);
               // Trigger reload
               try {
                 Get.find<ModelController>().refreshDownloaded();
               } catch (_) {}
+            } else if (status == 'Download stalled') {
+              // The system downloader never started (common on some OEM
+              // ROMs); retry with the app's own resumable downloader.
+              _nativeDownloadIds.remove(filename);
+              final url = _nativeDownloadUrls.remove(filename);
+              if (url == null) {
+                activeDownloads.remove(filename);
+              } else {
+                unawaited(_directDownloadAfterStall(url, filename, progress));
+              }
             } else if (status.startsWith('Download failed') ||
                 status == 'Download cancelled') {
               activeDownloads.remove(filename);
               _nativeDownloadIds.remove(filename);
+              _nativeDownloadUrls.remove(filename);
+              if (status.startsWith('Download failed')) {
+                _notifyFailure(filename, status);
+              }
             }
           }
 
@@ -236,6 +260,7 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
         if (result != null) {
           final id = result['downloadId'] as int;
           _nativeDownloadIds[filename] = id;
+          _nativeDownloadUrls[filename] = url;
           return 'NATIVE_BACKGROUND_STARTED';
         }
         throw Exception('Native download failed to start.');
@@ -244,35 +269,71 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
         rethrow;
       }
     } else {
-      // Fallback for iOS/Desktop using standard Dio download
-      final savePath = await modelPath(filename);
-      try {
-        final result = await platform_dl.downloadModel(
-          url: url,
-          savePath: savePath,
-          authToken: authToken,
-          onProgress: (received, total) {
-            downloadProgress.downloadedBytes.value = received;
-            downloadProgress.totalBytes.value = total;
-            final elapsed = DateTime.now()
-                .difference(downloadProgress.startedAt)
-                .inMilliseconds;
-            if (elapsed > 0) {
-              downloadProgress.bytesPerSecond.value =
-                  received / (elapsed / 1000);
-            }
-            if (total > 0) {
-              downloadProgress.progress.value = received / total;
-            }
-          },
-        );
-        activeDownloads.remove(filename);
-        return result;
-      } catch (e) {
-        activeDownloads.remove(filename);
-        rethrow;
-      }
+      // iOS/desktop: the app's own resumable downloader.
+      return _directDownload(url, filename, downloadProgress,
+          authToken: authToken);
     }
+  }
+
+  Future<String> _directDownload(
+    String url,
+    String filename,
+    DownloadProgress downloadProgress, {
+    String? authToken,
+  }) async {
+    final savePath = await modelPath(filename);
+    downloadProgress.startedAt = DateTime.now();
+    try {
+      final result = await platform_dl.downloadModel(
+        url: url,
+        savePath: savePath,
+        authToken: authToken,
+        onProgress: (received, total) {
+          downloadProgress.status.value = '';
+          downloadProgress.downloadedBytes.value = received;
+          downloadProgress.totalBytes.value = total;
+          final elapsed = DateTime.now()
+              .difference(downloadProgress.startedAt)
+              .inMilliseconds;
+          if (elapsed > 0) {
+            downloadProgress.bytesPerSecond.value =
+                received / (elapsed / 1000);
+          }
+          if (total > 0) {
+            downloadProgress.progress.value = received / total;
+          }
+        },
+      );
+      activeDownloads.remove(filename);
+      return result;
+    } catch (e) {
+      activeDownloads.remove(filename);
+      rethrow;
+    }
+  }
+
+  Future<void> _directDownloadAfterStall(
+      String url, String filename, DownloadProgress progress) async {
+    progress.status.value = 'Switching to direct download...';
+    try {
+      final result = await _directDownload(url, filename, progress);
+      if (result != 'PAUSED') {
+        try {
+          await Get.find<ModelController>().refreshDownloaded();
+        } catch (_) {}
+      }
+    } catch (e) {
+      _notifyFailure(filename, '$e');
+    }
+  }
+
+  void _notifyFailure(String filename, String message) {
+    Get.snackbar(
+      'Download failed',
+      '$filename: ${message.replaceFirst('Download failed: ', '')}',
+      snackPosition: SnackPosition.BOTTOM,
+      duration: const Duration(seconds: 6),
+    );
   }
 
   void pauseDownload(String filename) {
@@ -282,6 +343,7 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
           downloadId: nativeId, filename: filename);
       activeDownloads.remove(filename);
       _nativeDownloadIds.remove(filename);
+      _nativeDownloadUrls.remove(filename);
     } else {
       platform_dl.pauseDownload(filename);
       activeDownloads[filename]?.isPaused.value = true;

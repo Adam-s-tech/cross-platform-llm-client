@@ -264,6 +264,11 @@ class MainActivity : FlutterActivity() {
             var lastBytes = 0L
             var lastTime = System.currentTimeMillis()
             var lastReportedSpeed = 0.0
+            // Some OEM ROMs (OriginOS, HyperOS, RedMagic OS) leave DownloadManager
+            // jobs PENDING/PAUSED forever. If nothing arrives at all within this
+            // window, give up so the app can fall back to its own downloader.
+            val stallTimeoutMs = 30_000L
+            var noBytesSince = System.currentTimeMillis()
 
             while (!isFinished) {
                 Thread.sleep(1000)
@@ -295,15 +300,30 @@ class MainActivity : FlutterActivity() {
                                 bytesPerSecond = lastReportedSpeed
                             }
 
+                            val reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
+                            val reason = if (reasonIndex >= 0) cursor.getInt(reasonIndex) else 0
+                            if (downloaded > 0) noBytesSince = now
+
                             if (status == DownloadManager.STATUS_SUCCESSFUL) {
                                 isFinished = true
                                 finalizeInAppDownload(downloadId, safeName, modelsDir, downloaded, total)
                             } else if (status == DownloadManager.STATUS_FAILED) {
                                 isFinished = true
                                 removeInAppDownload(downloadId)
-                                emitProgress(safeName, downloaded, total, 0.0, "Download failed")
+                                emitProgress(safeName, downloaded, total, 0.0,
+                                    "Download failed: ${failureReason(reason)}")
+                            } else if (downloaded == 0L && now - noBytesSince > stallTimeoutMs) {
+                                isFinished = true
+                                manager.remove(downloadId)
+                                removeInAppDownload(downloadId)
+                                emitProgress(safeName, 0, total, 0.0, "Download stalled")
                             } else {
-                                emitProgress(safeName, downloaded, total, bytesPerSecond, "Downloading...")
+                                val label = when (status) {
+                                    DownloadManager.STATUS_PENDING -> "Waiting to start..."
+                                    DownloadManager.STATUS_PAUSED -> pausedReason(reason)
+                                    else -> "Downloading..."
+                                }
+                                emitProgress(safeName, downloaded, total, bytesPerSecond, label)
                             }
                         }
                     } else {
@@ -317,6 +337,24 @@ class MainActivity : FlutterActivity() {
             }
             monitoredInAppDownloads.remove(downloadId)
         }
+    }
+
+    private fun pausedReason(reason: Int): String = when (reason) {
+        DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "Paused: waiting for network"
+        DownloadManager.PAUSED_QUEUED_FOR_WIFI -> "Paused: waiting for Wi-Fi"
+        DownloadManager.PAUSED_WAITING_TO_RETRY -> "Paused: retrying"
+        else -> "Paused"
+    }
+
+    private fun failureReason(reason: Int): String = when (reason) {
+        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "not enough storage space"
+        DownloadManager.ERROR_DEVICE_NOT_FOUND -> "storage not available"
+        DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "too many redirects"
+        DownloadManager.ERROR_HTTP_DATA_ERROR -> "network data error"
+        DownloadManager.ERROR_CANNOT_RESUME -> "cannot resume"
+        DownloadManager.ERROR_FILE_ERROR -> "file error"
+        in 400..599 -> "server returned HTTP $reason"
+        else -> "error $reason"
     }
 
     private fun finalizeInAppDownload(

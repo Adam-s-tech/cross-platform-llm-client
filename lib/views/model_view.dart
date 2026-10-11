@@ -2406,6 +2406,17 @@ class ModelView extends GetView<ModelController> {
               minHeight: 5,
             ),
           ),
+          if (dp.status.value.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              dp.status.value,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: AppColors.warning,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           Row(
             children: [

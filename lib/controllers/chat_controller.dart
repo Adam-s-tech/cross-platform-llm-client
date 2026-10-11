@@ -736,6 +736,7 @@ class ChatController extends GetxController {
             source: 'chat',
             imagePath: imagePath,
             audioPath: fileType == 'audio' ? filePath : null,
+            stopSequences: Get.find<SettingsController>().stopSequences.toList(),
             onToken: (token) {
               // Ignore tokens from a generation the user already stopped.
               if (generationId != _generationSerial) return;

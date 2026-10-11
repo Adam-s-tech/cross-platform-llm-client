@@ -147,6 +147,38 @@ class SettingsView extends GetView<SettingsController> {
                 ),
               ]),
               const SizedBox(height: 24),
+              _sectionLabel(context, 'STOP SEQUENCES'),
+              _appleGroupedCard(context, isDark, children: [
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                            'Local models stop when they write one of these. '
+                            'One per line; use \\n for a newline.',
+                            style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: Theme.of(context).hintColor)),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: controller.stopSequencesController,
+                          minLines: 2,
+                          maxLines: 5,
+                          style: GoogleFonts.firaCode(fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: '###\n\\nUser:',
+                            suffixIcon: IconButton(
+                                icon: const Icon(Icons.check_circle_outline,
+                                    size: 20),
+                                onPressed: () => controller.setStopSequences(
+                                    controller.stopSequencesController.text)),
+                          ),
+                        ),
+                      ]),
+                ),
+              ]),
+              const SizedBox(height: 24),
               _sectionLabel(context, 'MODEL PARAMETERS'),
               _buildLiteRtCard(context, isDark),
               const SizedBox(height: 10),

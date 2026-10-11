@@ -71,6 +71,10 @@ class SettingsController extends GetxController {
   final customCloudKeyController = TextEditingController();
   final globalSystemPromptController = TextEditingController();
 
+  /// Strings that end a local model's reply (one per line in Settings).
+  final stopSequences = <String>[].obs;
+  final stopSequencesController = TextEditingController();
+
   final openaiModelController = TextEditingController();
   final anthropicModelController = TextEditingController();
   final googleModelController = TextEditingController();
@@ -114,6 +118,7 @@ class SettingsController extends GetxController {
     customCloudBaseUrlController.dispose();
     customCloudKeyController.dispose();
     globalSystemPromptController.dispose();
+    stopSequencesController.dispose();
     openaiModelController.dispose();
     anthropicModelController.dispose();
     googleModelController.dispose();
@@ -239,6 +244,12 @@ class SettingsController extends GetxController {
     customCloudBaseUrlController.text = customCloudBaseUrl.value;
     customCloudKeyController.text = customCloudKey.value;
     globalSystemPromptController.text = globalSystemPrompt.value;
+    stopSequences.value = (_hive.getSetting<List>(AppConstants.keyStopSequences,
+                defaultValue: const []) ??
+            const [])
+        .whereType<String>()
+        .toList();
+    stopSequencesController.text = stopSequences.join('\n');
 
     openaiModelController.text = openaiModel.value;
     anthropicModelController.text = anthropicModel.value;
@@ -585,6 +596,28 @@ class SettingsController extends GetxController {
         AppConstants.keyCustomCloudProfiles, customCloudProfiles.toList());
     await _hive.setSetting(
         AppConstants.keyCustomCloudProfileIndex, customCloudProfileIndex.value);
+  }
+
+  /// One stop sequence per line. Escapes like `\n` are allowed so a stop
+  /// string can include a newline (e.g. `\nUser:`).
+  Future<void> setStopSequences(String text) async {
+    final list = text
+        .split('\n')
+        .map((l) => l.replaceAll(r'\n', '\n').replaceAll(r'\t', '\t'))
+        .where((l) => l.trim().isNotEmpty)
+        .take(8)
+        .toList();
+    stopSequences.value = list;
+    stopSequencesController.text = text
+        .split('\n')
+        .where((l) => l.trim().isNotEmpty)
+        .take(8)
+        .join('\n');
+    await _hive.setSetting(AppConstants.keyStopSequences, list);
+    Get.snackbar('Saved', list.isEmpty
+        ? 'Stop sequences cleared.'
+        : '${list.length} stop sequence(s) saved.',
+        snackPosition: SnackPosition.BOTTOM);
   }
 
   Future<void> setGlobalSystemPrompt(String prompt) async {

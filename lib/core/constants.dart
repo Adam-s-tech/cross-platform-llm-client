@@ -46,6 +46,7 @@ class AppConstants {
   /// Set while a GGUF model runs on the GPU until its first reply succeeds;
   /// still set on the next load means the GPU crashed the app.
   static const String keyGgufGpuPending = 'gguf_gpu_pending';
+  static const String keyStopSequences = 'stop_sequences';
   static const String keyImageModelPath = 'image_model_path';
   static const String keyImageModelName = 'image_model_name';
   static const String keyTemperature = 'temperature';

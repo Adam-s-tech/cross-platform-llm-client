@@ -115,6 +115,29 @@ void main() {
       expect(fake.lastMaxTokens, 7);
     });
 
+    test('passes OpenAI stop (string or list) through to the model',
+        () async {
+      var res = await send('POST', '/v1/chat/completions',
+          headers: json,
+          body: jsonEncode({
+            'messages': [
+              {'role': 'user', 'content': 'hi'}
+            ],
+            'stop': '###',
+          }));
+      expect(res.statusCode, 200);
+      expect(fake.lastStop, ['###']);
+      res = await send('POST', '/v1/completions',
+          headers: json,
+          body: jsonEncode({
+            'prompt': 'hi',
+            'stop': ['a', 'b', 7, 'c', 'd', 'e'],
+          }));
+      expect(res.statusCode, 200);
+      expect(fake.lastStop, ['a', 'b', 'c', 'd'],
+          reason: 'non-strings dropped, at most 4 like OpenAI');
+    });
+
     test('rejects with 429 while the app is generating', () async {
       fake.isGenerating.value = true;
       final res = await send('POST', '/v1/chat/completions',
@@ -179,6 +202,7 @@ class FakeInference extends GetxService implements InferenceService {
   final loadedModelRuntime = 'litert'.obs;
 
   int? lastMaxTokens;
+  List<String> lastStop = const [];
   int stops = 0;
   Duration tokenInterval = const Duration(milliseconds: 20);
   int tokensToEmit = 3;
@@ -196,9 +220,11 @@ class FakeInference extends GetxService implements InferenceService {
     String? imagePath,
     String? audioPath,
     int? maxTokens,
+    List<String> stopSequences = const [],
     void Function(String token)? onToken,
   }) async {
     lastMaxTokens = maxTokens;
+    lastStop = stopSequences;
     isGenerating.value = true;
     generationSource.value = source;
     final stopped = _stopped = Completer<void>();

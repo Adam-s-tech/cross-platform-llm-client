@@ -4,6 +4,7 @@ import 'hive_service.dart';
 import '../core/constants.dart';
 import 'device_info_service.dart';
 import 'app_log_service.dart';
+import 'stop_sequence_filter.dart';
 
 // Conditionally import llama_flutter_android — only on Android
 import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart'
@@ -290,6 +291,7 @@ class InferenceService extends GetxService {
     String? imagePath,
     String? audioPath,
     int? maxTokens,
+    List<String> stopSequences = const [],
     void Function(String token)? onToken,
   }) async {
     if (!supportsLocalInference || _engine == null || !isModelLoaded.value) {
@@ -331,6 +333,9 @@ class InferenceService extends GetxService {
       onToken?.call(text);
     }
 
+    final stopFilter = StopSequenceFilter(stopSequences);
+    var stopSequenceHit = false;
+
     try {
       final temperature = _hive.getSetting<double>(
             AppConstants.keyTemperature,
@@ -357,8 +362,20 @@ class InferenceService extends GetxService {
         imagePath: imagePath,
         audioPath: audioPath,
         source: source,
-        onToken: (token) {
+        onToken: (rawToken) {
           if (!isCurrent()) return;
+          var token = rawToken;
+          if (stopFilter.isActive) {
+            token = stopFilter.add(rawToken);
+            if (stopFilter.stopped && !stopSequenceHit) {
+              stopSequenceHit = true;
+              // Halt the engine directly: this is a normal finish, not a
+              // user/server interruption, so stopCount must not change.
+              unawaited(_engine?.stop().catchError((_) {}) ??
+                  Future<void>.value());
+            }
+            if (token.isEmpty) return;
+          }
           firstVisibleTokenAt ??= DateTime.now();
           tokenCount.value++;
           streamingText.value += token;
@@ -381,7 +398,15 @@ class InferenceService extends GetxService {
       );
       tokenFlushTimer?.cancel();
       if (!isCurrent()) return result;
+      if (stopFilter.isActive) {
+        final tail = stopFilter.flush();
+        if (tail.isNotEmpty) {
+          streamingText.value += tail;
+          tokenFlushBuffer.write(tail);
+        }
+      }
       flushTokenBuffer();
+      final finalText = stopSequenceHit ? stopFilter.text : result;
 
       await refreshContextInfo();
       if (isCurrent()) {
@@ -411,7 +436,7 @@ class InferenceService extends GetxService {
         }
       }
 
-      return result;
+      return finalText;
     } catch (e) {
       tokenFlushTimer?.cancel();
       if (isCurrent()) {

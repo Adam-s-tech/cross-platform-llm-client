@@ -216,8 +216,9 @@ class OpenAiServerService {
       }
 
       final maxTokens = _maxTokens(body);
+      final stop = _stop(body);
       if (body['stream'] == true) {
-        await _streamChatResponse(request, inference, parsed, maxTokens);
+        await _streamChatResponse(request, inference, parsed, maxTokens, stop);
       } else {
         final stopsBefore = inference.stopCount;
         final text = await inference.generate(
@@ -229,6 +230,7 @@ class OpenAiServerService {
           imagePath: parsed.imagePath,
           audioPath: parsed.audioPath,
           maxTokens: maxTokens,
+          stopSequences: stop,
         );
         if (inference.stopCount != stopsBefore) {
           await _interrupted(request);
@@ -267,6 +269,16 @@ class OpenAiServerService {
         status: HttpStatus.serviceUnavailable,
       );
 
+  /// OpenAI `stop`: a string or a list of up to 4 strings.
+  List<String> _stop(Map<String, dynamic> body) {
+    final raw = body['stop'];
+    if (raw is String) return raw.isEmpty ? const [] : [raw];
+    if (raw is List) {
+      return raw.whereType<String>().where((s) => s.isNotEmpty).take(4).toList();
+    }
+    return const [];
+  }
+
   int? _maxTokens(Map<String, dynamic> body) {
     final raw = body['max_completion_tokens'] ?? body['max_tokens'];
     return raw is num && raw > 0 ? raw.toInt() : null;
@@ -293,8 +305,10 @@ class OpenAiServerService {
       }
 
       final maxTokens = _maxTokens(body);
+      final stop = _stop(body);
       if (body['stream'] == true) {
-        await _streamCompletionResponse(request, inference, prompt, maxTokens);
+        await _streamCompletionResponse(
+            request, inference, prompt, maxTokens, stop);
       } else {
         final stopsBefore = inference.stopCount;
         final text = await inference.generate(
@@ -302,6 +316,7 @@ class OpenAiServerService {
           systemPrompt: _defaultSystemPrompt(inference.loadedModelName.value),
           source: 'server',
           maxTokens: maxTokens,
+          stopSequences: stop,
         );
         if (inference.stopCount != stopsBefore) {
           await _interrupted(request);
@@ -485,6 +500,7 @@ class OpenAiServerService {
     InferenceService inference,
     _ParsedChatRequest parsed,
     int? maxTokens,
+    List<String> stop,
   ) async {
     final response = request.response;
     _addCorsHeaders(response);
@@ -524,6 +540,7 @@ class OpenAiServerService {
       imagePath: parsed.imagePath,
       audioPath: parsed.audioPath,
       maxTokens: maxTokens,
+      stopSequences: stop,
       onToken: emit,
     );
     await _finishStream(sse, inference, stopsBefore,
@@ -561,6 +578,7 @@ class OpenAiServerService {
     InferenceService inference,
     String prompt,
     int? maxTokens,
+    List<String> stop,
   ) async {
     final response = request.response;
     _addCorsHeaders(response);
@@ -592,6 +610,7 @@ class OpenAiServerService {
       systemPrompt: _defaultSystemPrompt(inference.loadedModelName.value),
       source: 'server',
       maxTokens: maxTokens,
+      stopSequences: stop,
       onToken: emit,
     );
     await _finishStream(sse, inference, stopsBefore,

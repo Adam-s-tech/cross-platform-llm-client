@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/download_service.dart';
+import '../services/gguf_metadata.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
 import '../services/hive_service.dart';
@@ -550,6 +551,7 @@ class ModelController extends GetxController {
     }
     final loadAction = await _confirmModelLoadSafety(
       filename: filename,
+      path: path,
       fileBytes: fileBytes,
       isLiteRt: isLiteRt,
     );
@@ -916,6 +918,7 @@ class ModelController extends GetxController {
 
   Future<_ModelLoadAction> _confirmModelLoadSafety({
     required String filename,
+    required String path,
     required int fileBytes,
     required bool isLiteRt,
   }) async {
@@ -929,14 +932,37 @@ class ModelController extends GetxController {
         ? DownloadService.formatWholeMb(availableBytes)
         : 'Unknown';
     final lower = filename.toLowerCase();
+
+    // For GGUF, estimate real usage from the file's header: weights plus the
+    // KV cache for the configured context, which file size alone ignores.
+    final gguf = lower.endsWith('.gguf') ? await readGgufInfo(path) : null;
+    final contextTokens = _settings.contextSize.value;
+    final estimatedBytes = gguf?.estimateBytes(contextTokens);
+    final fits = estimatedBytes == null ||
+        availableBytes <= 0 ||
+        estimatedBytes <= availableBytes;
+    final fittingContext = (gguf != null && !fits && availableBytes > 0)
+        ? gguf.maxContextFitting(availableBytes)
+        : null;
+
     final hasMeasuredMemory = availableBytes > 0 && fileBytes > 0;
     final isCriticallyLow = hasMeasuredMemory &&
-        (availableBytes < fileBytes || _isLowMemoryBytes(availableBytes));
+        (estimatedBytes != null
+            ? estimatedBytes > availableBytes
+            : (availableBytes < fileBytes ||
+                _isLowMemoryBytes(availableBytes)));
     final isLargeForRam =
         availableBytes > 0 && fileBytes > 0 && availableBytes < fileBytes * 2;
     final isLowRam = availableBytes > 0 && _isLowMemoryBytes(availableBytes);
     final String warning;
-    if (isCriticallyLow) {
+    if (gguf != null && !fits) {
+      warning = fittingContext != null
+          ? 'This probably won\'t fit in free memory at a context of '
+              '$contextTokens tokens. A context of $fittingContext tokens '
+              'should fit.'
+          : 'This model is probably too large for the free memory on this '
+              'phone, even with a small context. Try a smaller model.';
+    } else if (isCriticallyLow) {
       warning =
           'Available RAM is lower than recommended. This can crash the app if Android cannot reserve enough memory.';
     } else if (isLargeForRam || isLowRam || isLiteRt) {
@@ -969,6 +995,13 @@ class ModelController extends GetxController {
             Text('Runtime: $runtimeLabel'),
             Text('Available RAM: $ramLabel'),
             Text('Model size: $modelLabel'),
+            if (gguf != null && estimatedBytes != null)
+              Text(
+                'Estimated memory: '
+                '${DownloadService.formatWholeMb(estimatedBytes)} '
+                '(context ${DownloadService.formatWholeMb(gguf.kvCacheBytes(contextTokens))} '
+                'for $contextTokens tokens)',
+              ),
             if (hasLoadedModel) ...[
               const SizedBox(height: 12),
               Text(
@@ -1004,6 +1037,14 @@ class ModelController extends GetxController {
                 }
               },
               child: const Text('Restart app'),
+            ),
+          if (fittingContext != null)
+            TextButton(
+              onPressed: () async {
+                await _settings.setContextSize(fittingContext);
+                Get.back(result: _ModelLoadAction.continueLoad);
+              },
+              child: Text('Load with $fittingContext tokens'),
             ),
           ElevatedButton(
             onPressed: () async {

@@ -209,10 +209,9 @@ class TaskView extends GetView<TaskController> {
         decoration: const InputDecoration(hintText: 'Describe what you want the AI to do…'),
       ),
       actions: [
-        TextButton(onPressed: () { textCtrl.dispose(); Navigator.pop(ctx); }, child: Text('Cancel', style: GoogleFonts.inter(color: Theme.of(ctx).hintColor))),
+        TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Cancel', style: GoogleFonts.inter(color: Theme.of(ctx).hintColor))),
         ElevatedButton(onPressed: () {
           if (textCtrl.text.trim().isNotEmpty) { controller.createTask(textCtrl.text.trim()); }
-          textCtrl.dispose();
           Navigator.pop(ctx);
         }, child: const Text('Create')),
       ],

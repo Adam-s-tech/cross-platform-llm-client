@@ -186,13 +186,13 @@ class AppConstants {
       'template': 'phi',
     },
     {
-      'name': 'Gemma 2 2B Instruct (Q4_K_M)',
-      'filename': 'gemma-2-2b-it-q4_k_m.gguf',
+      'name': 'Gemma 3 1B Instruct (Q4_0)',
+      'filename': 'gemma-3-1b-it-q4_0.gguf',
       'url':
-          'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
-      'size': '1.71 GB',
+          'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_0.gguf',
+      'size': '722 MB',
       'description':
-          'Google\'s lightweight general chat model — fast and smart',
+          'Google\'s newer compact chat model — fast, small, and capable',
       'template': 'gemma',
     },
     {

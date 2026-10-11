@@ -1,11 +1,20 @@
 import 'dart:async';
-import 'dart:io' show Platform, Directory;
+import 'dart:ffi' show Abi;
+import 'dart:io' show Platform, Directory, File;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_litert_lm/flutter_litert_lm.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 
 /// Whether the current platform supports local inference.
 bool get supportsLocalInference => Platform.isAndroid || Platform.isIOS;
+
+/// True when the app runs as a 32-bit process (32-bit Android, e.g. Android
+/// Go phones). LiteRT ships 64-bit only, and the address space limits model
+/// size.
+bool get isRunning32Bit =>
+    Abi.current() == Abi.androidArm || Abi.current() == Abi.androidIA32;
+
+Future<int> fileLength(String path) => File(path).length();
 
 /// Result from model loading.
 class LoadResult {

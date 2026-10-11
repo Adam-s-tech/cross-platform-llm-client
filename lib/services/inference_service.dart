@@ -71,6 +71,20 @@ class InferenceService extends GetxService {
     }
     if (isLoadingModel.value) return 'ERROR: Model is already loading.';
 
+    if (platform.isRunning32Bit) {
+      final lower = modelPath.toLowerCase();
+      if (_runtimeFor(modelPath, modelRuntime) == 'litert') {
+        return 'ERROR: LiteRT models need 64-bit Android. This phone runs '
+            '32-bit Android; use a small GGUF model (under 1.5 GB) instead.';
+      }
+      // A 32-bit process can't map a model this large next to everything else.
+      if (lower.endsWith('.gguf') &&
+          await _fileBytes(modelPath) > 1536 * 1024 * 1024) {
+        return 'ERROR: This model is too large for 32-bit Android. Choose a '
+            'GGUF model under 1.5 GB (for example a 1B Q4 model).';
+      }
+    }
+
     if (modelPath.toLowerCase().endsWith('.safetensors')) {
       return 'ERROR: Cannot load image generation models (.safetensors) into the local text engine. Native local image generation requires the upcoming stable-diffusion engine update. Use Cloud Stability AI for now.';
     }
@@ -593,6 +607,14 @@ class InferenceService extends GetxService {
         }
         await _hive.setSetting(AppConstants.keyLiteRtGpuLoadPending, false);
       }
+    }
+  }
+
+  Future<int> _fileBytes(String path) async {
+    try {
+      return await platform.fileLength(path);
+    } catch (_) {
+      return 0;
     }
   }
 

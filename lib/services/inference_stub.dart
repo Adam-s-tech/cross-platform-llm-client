@@ -4,6 +4,10 @@ library;
 
 bool get supportsLocalInference => false;
 
+bool get isRunning32Bit => false;
+
+Future<int> fileLength(String path) async => 0;
+
 class LoadResult {
   final bool success;
   final String message;

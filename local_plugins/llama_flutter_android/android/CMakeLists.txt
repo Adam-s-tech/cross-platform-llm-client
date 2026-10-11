@@ -32,7 +32,10 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "Build every Arm CPU variant" FORCE)
     set(GGML_VULKAN ${LLAMA_ANDROID_VULKAN} CACHE BOOL "Enable Vulkan GPU backend" FORCE)
 else()
+    # 32-bit Arm (armeabi-v7a): plain CPU build. llamafile's sgemm uses
+    # FP16 NEON intrinsics that ARMv7 lacks.
     set(GGML_VULKAN OFF CACHE BOOL "Enable Vulkan GPU backend" FORCE)
+    set(GGML_LLAMAFILE OFF CACHE BOOL "No FP16 NEON on ARMv7" FORCE)
 endif()
 
 if(GGML_VULKAN)

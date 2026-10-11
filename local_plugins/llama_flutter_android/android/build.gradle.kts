@@ -56,7 +56,9 @@ android {
         minSdk = 28  // Android 9: matches the app; needed for Vulkan 1.1 symbols
         
         ndk {
-            abiFilters.addAll(listOf("arm64-v8a"))  // Only ARM64
+            // arm64: full build (CPU variants + Vulkan). armeabi-v7a: plain CPU
+            // build for phones running 32-bit Android (e.g. Android Go).
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
         }
         
         externalNativeBuild {

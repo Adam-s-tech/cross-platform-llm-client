@@ -171,7 +171,7 @@ class AppConstants {
       'filename': 'qwen2-vl-2b-instruct-q4_k_m.gguf',
       'url':
           'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
-      'size': '1.5 GB',
+      'size': '986 MB',
       'description': 'Vision-capable — can understand images',
       'template': 'chatml',
       'vision': 'true',
@@ -218,7 +218,7 @@ class AppConstants {
       'filename': 'dolphin-3.0-qwen2.5-1.5b-q4_k_m.gguf',
       'url':
           'https://huggingface.co/bartowski/Dolphin3.0-Qwen2.5-1.5B-GGUF/resolve/main/Dolphin3.0-Qwen2.5-1.5B-Q4_K_M.gguf',
-      'size': '1.1 GB',
+      'size': '986 MB',
       'description': 'Uncensored Dolphin 3.0 — Fast and unrestricted',
       'template': 'chatml',
     },
@@ -271,7 +271,7 @@ class AppConstants {
       'name': 'CyberRealistic (Apple CoreML 6-bit)',
       'filename': 'cyberrealistic-6bit.coreml.zip',
       'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic-6bit.coreml.zip?download=true',
-      'size': '1.0 GB',
+      'size': '855 MB',
       'description': 'Compressed 6-bit model optimized for Apple devices with 4GB/6GB RAM',
       'template': 'sd',
     },

@@ -301,8 +301,11 @@ class ModelController extends GetxController {
     if (match == null) return 0;
     final value = double.tryParse(match.group(1) ?? '') ?? 0;
     final unit = (match.group(2) ?? '').toUpperCase();
-    if (unit == 'GB') return (value * 1024 * 1024 * 1024).round();
-    if (unit == 'MB') return (value * 1024 * 1024).round();
+    // Catalog sizes follow Hugging Face (decimal: 1 GB = 10^9 bytes).
+    // Reading them as binary inflated every expectation by ~7% and flagged
+    // complete downloads as incomplete.
+    if (unit == 'GB') return (value * 1000 * 1000 * 1000).round();
+    if (unit == 'MB') return (value * 1000 * 1000).round();
     return 0;
   }
 

@@ -469,6 +469,23 @@ class ModelController extends GetxController {
     _download.pauseDownload(filename);
   }
 
+  /// Removes a user-added model entry (e.g. one added with a wrong URL),
+  /// cancelling any download and deleting any partial or complete file.
+  Future<void> removeCustomModel(AiModel model) async {
+    if (_download.activeDownloads.containsKey(model.filename)) {
+      _download.pauseDownload(model.filename);
+    }
+    if (_inference.loadedModelName.value == model.filename) {
+      await _inference.unloadModel();
+    }
+    await _download.deleteModel(model.filename);
+    customModels.removeWhere((m) => m.filename == model.filename);
+    availableModels.removeWhere(
+        (m) => m.isCustom && m.filename == model.filename);
+    await _saveCustomModels();
+    await refreshDownloaded();
+  }
+
   Future<void> deleteModel(String filename) async {
     await _download.deleteModel(filename);
     await refreshDownloaded();

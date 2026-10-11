@@ -2361,6 +2361,15 @@ class ModelView extends GetView<ModelController> {
                               icon: const Icon(Icons.save_alt, size: 20),
                               color: AppColors.secondary,
                             ),
+                          if (model.isCustom)
+                            IconButton(
+                              tooltip: 'Remove from list',
+                              onPressed: disableActions
+                                  ? null
+                                  : () => _confirmRemoveCustom(context, model),
+                              icon: const Icon(Icons.playlist_remove, size: 20),
+                              color: AppColors.error,
+                            ),
                         ],
                       ],
                     ),
@@ -2379,6 +2388,29 @@ class ModelView extends GetView<ModelController> {
         ),
       );
     });
+  }
+
+  Future<void> _confirmRemoveCustom(BuildContext context, AiModel model) async {
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        title: const Text('Remove from list?'),
+        content: Text(
+            '${model.name} will be removed from your models. You can add it '
+            'again later with the correct URL.'),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Get.back(result: true),
+            child: const Text('Remove',
+                style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await controller.removeCustomModel(model);
   }
 
   Widget _buildInlineDownloadProgress(BuildContext context, AiModel model) {

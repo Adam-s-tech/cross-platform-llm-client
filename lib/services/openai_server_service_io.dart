@@ -599,8 +599,7 @@ class _ParsedChatRequest {
     required this.imagePath,
     required this.audioPath,
     required this.tempFiles,
-    this.error,
-  });
+  }) : error = null;
 
   _ParsedChatRequest.error(this.error)
       : prompt = '',
@@ -631,8 +630,7 @@ class _ContentResult {
     this.imagePath,
     this.audioPath,
     this.tempFiles = const [],
-    this.error,
-  });
+  }) : error = null;
 
   _ContentResult.error(this.error)
       : text = '',

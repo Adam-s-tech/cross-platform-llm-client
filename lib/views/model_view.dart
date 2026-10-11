@@ -566,7 +566,6 @@ class ModelView extends GetView<ModelController> {
           inference.loadingModelName.value != model.filename) {
         return const SizedBox.shrink();
       }
-      final progress = inference.modelLoadProgress.value;
 
       return Container(
         margin: const EdgeInsets.only(top: 12),
@@ -1001,6 +1000,7 @@ class ModelView extends GetView<ModelController> {
     }
 
     await cloud.refreshModels(provider.id);
+    if (!context.mounted) return;
     if ((cloud.errorByProvider[provider.id] ?? '').isNotEmpty) {
       _showProviderKeyDialog(
         context,
@@ -1393,7 +1393,7 @@ class ModelView extends GetView<ModelController> {
               return;
             }
             Get.back(closeOverlays: false);
-            if (openModelsAfterSave) {
+            if (openModelsAfterSave && context.mounted) {
               _showModelSelectSheet(context, cloud, provider);
             }
           },
@@ -1997,36 +1997,6 @@ class ModelView extends GetView<ModelController> {
           color: AppColors.error,
           fontWeight: FontWeight.w500,
         ),
-      ),
-    );
-  }
-
-  Widget _buildInfoBox(BuildContext context, String message) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppColors.info.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.info.withValues(alpha: 0.22)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline, size: 16, color: AppColors.info),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style: GoogleFonts.inter(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurface,
-                fontWeight: FontWeight.w500,
-                height: 1.35,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -3041,7 +3011,7 @@ class _SheetTextField extends StatelessWidget {
   final String hint;
   final IconData prefixIcon;
   final TextInputType? keyboardType;
-  final int maxLines;
+  final int maxLines = 1;
   final Color bg;
   final Color border;
 
@@ -3050,7 +3020,6 @@ class _SheetTextField extends StatelessWidget {
     required this.hint,
     required this.prefixIcon,
     this.keyboardType,
-    this.maxLines = 1,
     required this.bg,
     required this.border,
   });

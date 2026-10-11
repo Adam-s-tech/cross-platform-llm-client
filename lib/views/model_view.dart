@@ -179,6 +179,7 @@ class ModelView extends GetView<ModelController> {
       'image': 'Image Gen',
       'uncensored': 'Uncensored',
       'vision': 'Vision',
+      'npu': 'Apple NPU',
     };
     return Obx(() {
       final selected = controller.localFilter.value.isEmpty
@@ -2226,19 +2227,23 @@ class ModelView extends GetView<ModelController> {
 
   Widget _buildModelCard(BuildContext context, AiModel model) {
     return Obx(() {
+      final actualFilename = model.filename.toLowerCase().endsWith('.zip') 
+          ? model.filename.substring(0, model.filename.length - 4) 
+          : model.filename;
+
       final isDownloaded = controller.isDownloaded(model.filename);
       final inference = Get.find<InferenceService>();
       final localImage = Get.find<LocalImageService>();
-      final isActive = inference.loadedModelName.value == model.filename ||
-          localImage.loadedModelName.value == model.filename;
+      final isActive = inference.loadedModelName.value == actualFilename ||
+          localImage.loadedModelName.value == actualFilename;
       final isCurrentlyDownloading =
           controller.isDownloadingModel(model.filename);
       final isAnyModelLoading =
           inference.isLoadingModel.value || localImage.isLoadingModel.value;
       final isThisTextModelLoading = inference.isLoadingModel.value &&
-          inference.loadingModelName.value == model.filename;
+          inference.loadingModelName.value == actualFilename;
       final isThisImageModelLoading = localImage.isLoadingModel.value &&
-          localImage.loadedModelName.value == model.filename;
+          localImage.loadedModelName.value == actualFilename;
       final isThisModelLoading =
           isThisTextModelLoading || isThisImageModelLoading;
       final disableActions = controller.isImporting.value ||
@@ -2317,7 +2322,7 @@ class ModelView extends GetView<ModelController> {
                           FilledButton.tonal(
                             onPressed: isActive || disableActions
                                 ? null
-                                : () => controller.loadModel(model.filename),
+                                : () => controller.loadModel(actualFilename),
                             style: FilledButton.styleFrom(
                               backgroundColor: isActive
                                   ? AppColors.success.withValues(alpha: 0.2)
@@ -2349,7 +2354,7 @@ class ModelView extends GetView<ModelController> {
                                 : isActive
                                     ? () => controller.unloadModel()
                                     : () => _confirmDeleteModel(
-                                        context, model.filename),
+                                        context, actualFilename),
                             icon: Icon(
                               isActive
                                   ? Icons.eject_outlined

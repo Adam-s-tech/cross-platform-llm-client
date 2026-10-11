@@ -57,6 +57,7 @@ class AppConstants {
   static const String keyImageGenSize = 'image_gen_size';
   static const String keyImageGenQuantization = 'image_gen_quantization';
   static const String keyFontScale = 'font_scale';
+  static const String keyBatchModeWarningAccepted = 'batch_mode_warning_accepted';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;
@@ -251,6 +252,22 @@ class AppConstants {
       'size': '2.0 GB',
       'description':
           'Photorealistic, uncensored local image generation — FP16 for mobile',
+      'template': 'sd',
+    },
+    {
+      'name': 'CyberRealistic (Apple CoreML FP16)',
+      'filename': 'cyberrealistic.coreml.zip',
+      'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic.coreml.zip?download=true',
+      'size': '2.0 GB',
+      'description': 'Optimized for Apple devices with M-series chips or 8GB+ RAM',
+      'template': 'sd',
+    },
+    {
+      'name': 'CyberRealistic (Apple CoreML 6-bit)',
+      'filename': 'cyberrealistic-6bit.coreml.zip',
+      'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic-6bit.coreml.zip?download=true',
+      'size': '1.0 GB',
+      'description': 'Compressed 6-bit model optimized for Apple devices with 4GB/6GB RAM',
       'template': 'sd',
     },
     {

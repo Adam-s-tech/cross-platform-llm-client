@@ -19,7 +19,12 @@ class ImageGenerationNotificationService {
   Future<void> init() async {
     if (_initialized) return;
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const settings = InitializationSettings(android: android);
+    const darwin = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
+    const settings = InitializationSettings(android: android, iOS: darwin);
     await _notifications.initialize(settings);
     await _notifications
         .resolvePlatformSpecificImplementation<

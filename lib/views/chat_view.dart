@@ -45,18 +45,20 @@ class ChatView extends GetView<ChatController> {
           _contextBar(context, isDark),
           Expanded(child: Obx(() {
             if (controller.currentSessionId.value.isEmpty ||
-                controller.messages.isEmpty)
+                controller.messages.isEmpty) {
               return _emptyState(context, isDark);
+            }
             final streaming = controller.isStreaming.value;
             final text = controller.streamingResponse.value;
             final n = controller.messages.length;
             return NotificationListener<ScrollUpdateNotification>(
               onNotification: (note) {
                 if (note.dragDetails != null && streaming) {
-                  if ((note.scrollDelta ?? 0) < 0)
+                  if ((note.scrollDelta ?? 0) < 0) {
                     controller.pauseStreamingFollow();
-                  else
+                  } else {
                     controller.resumeStreamingFollowIfNearBottom();
+                  }
                 }
                 return false;
               },
@@ -138,8 +140,9 @@ class ChatView extends GetView<ChatController> {
                                   : p == 'custom'
                                       ? settings.customCloudModel.value
                                       : settings.kimiModel.value;
-          if (p == 'custom' && model.isNotEmpty)
+          if (p == 'custom' && model.isNotEmpty) {
             model = '${settings.customCloudName.value}: $model';
+          }
         }
         final title = sid.isEmpty
             ? 'PrivateLM'
@@ -190,13 +193,16 @@ class ChatView extends GetView<ChatController> {
       }),
       actions: [
         Obx(() {
-          final isLocal = Get.find<SettingsController>().inferenceMode.value == 'local';
+          final isLocal =
+              Get.find<SettingsController>().inferenceMode.value == 'local';
           final inf = Get.find<InferenceService>();
           final localImage = Get.find<LocalImageService>();
-          if (isLocal && (inf.isModelLoaded.value || localImage.isModelLoaded.value)) {
+          if (isLocal &&
+              (inf.isModelLoaded.value || localImage.isModelLoaded.value)) {
             return IconButton(
               tooltip: 'Unload Model',
-              icon: const Icon(Icons.eject_outlined, size: 20, color: Color(0xFFFF3B30)),
+              icon: const Icon(Icons.eject_outlined,
+                  size: 20, color: Color(0xFFFF3B30)),
               onPressed: () => Get.find<ModelController>().unloadModel(),
             );
           }
@@ -258,8 +264,9 @@ class ChatView extends GetView<ChatController> {
       final inf = Get.find<InferenceService>();
       final active = controller.currentSessionId.value.isNotEmpty &&
           controller.messages.isNotEmpty;
-      if (!active || settings.inferenceMode.value != 'local')
+      if (!active || settings.inferenceMode.value != 'local') {
         return const SizedBox.shrink();
+      }
       final total = inf.contextTokensTotal.value > 0
           ? inf.contextTokensTotal.value
           : settings.contextSize.value;
@@ -469,8 +476,9 @@ class ChatView extends GetView<ChatController> {
             if (hasText && !isImageGen)
               Obx(() {
                 final inf = Get.find<InferenceService>();
-                if (inf.tokensPerSecond.value <= 0)
+                if (inf.tokensPerSecond.value <= 0) {
                   return const SizedBox.shrink();
+                }
                 return Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
@@ -576,7 +584,9 @@ class ChatView extends GetView<ChatController> {
               final backend = localImage.currentBackend.value;
               final backendLabel = backend == Backend.cpu
                   ? 'CPU'
-                  : (backend == Backend.metal ? 'APPLE NPU' : backend.displayName.split(' ').first.toUpperCase());
+                  : (backend == Backend.metal
+                      ? 'APPLE NPU'
+                      : backend.displayName.split(' ').first.toUpperCase());
               final accent = backend == Backend.cpu
                   ? const Color(0xFFFF9500)
                   : const Color(0xFF34C759);
@@ -656,23 +666,31 @@ class ChatView extends GetView<ChatController> {
               );
             }),
             Obx(() {
-              if (controller.lastBatchImagesBase64.isEmpty) return const SizedBox.shrink();
+              if (controller.lastBatchImagesBase64.isEmpty) {
+                return const SizedBox.shrink();
+              }
               return Container(
                 margin: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: const Color(0xFF34C759).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF34C759).withValues(alpha: 0.3)),
+                  border: Border.all(
+                      color: const Color(0xFF34C759).withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.check_circle_rounded, size: 18, color: Color(0xFF34C759)),
+                    const Icon(Icons.check_circle_rounded,
+                        size: 18, color: Color(0xFF34C759)),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Batch complete! (${controller.lastBatchImagesBase64.length} images)',
-                        style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: isDark ? Colors.white : Colors.black),
+                        style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: isDark ? Colors.white : Colors.black),
                       ),
                     ),
                     TextButton(
@@ -700,23 +718,31 @@ class ChatView extends GetView<ChatController> {
               );
             }),
             Obx(() {
-              if (controller.batchPrompts.isEmpty) return const SizedBox.shrink();
+              if (controller.batchPrompts.isEmpty) {
+                return const SizedBox.shrink();
+              }
               return Container(
                 margin: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: _appleBlue(context).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: _appleBlue(context).withValues(alpha: 0.3)),
+                  border: Border.all(
+                      color: _appleBlue(context).withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.layers_rounded, size: 18, color: _appleBlue(context)),
+                    Icon(Icons.layers_rounded,
+                        size: 18, color: _appleBlue(context)),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         '${controller.batchPrompts.length}/20 batch prompts',
-                        style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: isDark ? Colors.white : Colors.black),
+                        style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: isDark ? Colors.white : Colors.black),
                       ),
                     ),
                     TextButton(
@@ -730,7 +756,9 @@ class ChatView extends GetView<ChatController> {
                     ),
                     const SizedBox(width: 8),
                     FilledButton(
-                      onPressed: controller.isLoading.value ? null : () => controller.generateBatch(),
+                      onPressed: controller.isLoading.value
+                          ? null
+                          : () => controller.generateBatch(),
                       style: FilledButton.styleFrom(
                         backgroundColor: _appleBlue(context),
                         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -794,8 +822,8 @@ class ChatView extends GetView<ChatController> {
               Obx(() {
                 final settings = Get.find<SettingsController>();
                 final localImage = Get.find<LocalImageService>();
-                if (settings.inferenceMode.value == 'local' && 
-                    localImage.isModelLoaded.value && 
+                if (settings.inferenceMode.value == 'local' &&
+                    localImage.isModelLoaded.value &&
                     localImage.currentBackend.value == Backend.metal) {
                   return Padding(
                     padding: const EdgeInsets.only(right: 6),
@@ -823,28 +851,47 @@ class ChatView extends GetView<ChatController> {
                         testPrompts.shuffle();
                         controller.batchPrompts.clear();
                         controller.batchPrompts.addAll(testPrompts);
-                        Get.snackbar('Test Mode', 'Added 15 test prompts to the batch.', backgroundColor: const Color(0xFF34C759).withValues(alpha: 0.9), colorText: Colors.white);
+                        Get.snackbar(
+                            'Test Mode', 'Added 15 test prompts to the batch.',
+                            backgroundColor:
+                                const Color(0xFF34C759).withValues(alpha: 0.9),
+                            colorText: Colors.white);
                       },
                       onTap: () async {
                         final text = controller.textController.text.trim();
                         if (text.isEmpty) return;
                         if (controller.batchPrompts.length >= 20) {
-                          Get.snackbar('Batch Limit', 'You can only add up to 20 prompts per batch.');
+                          Get.snackbar('Batch Limit',
+                              'You can only add up to 20 prompts per batch.');
                           return;
                         }
                         if (!controller.batchModeAccepted.value) {
                           final accepted = await Get.dialog<bool>(
                             AlertDialog(
-                              backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                              title: Text('Batch Generation', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black)),
-                              content: Text('Generating multiple images back-to-back is demanding. Your device may become warm and use more battery.', style: GoogleFonts.inter(color: isDark ? Colors.white70 : Colors.black87)),
+                              backgroundColor: isDark
+                                  ? const Color(0xFF1C1C1E)
+                                  : Colors.white,
+                              title: Text('Batch Generation',
+                                  style: GoogleFonts.inter(
+                                      fontWeight: FontWeight.w600,
+                                      color: isDark
+                                          ? Colors.white
+                                          : Colors.black)),
+                              content: Text(
+                                  'Generating multiple images back-to-back is demanding. Your device may become warm and use more battery.',
+                                  style: GoogleFonts.inter(
+                                      color: isDark
+                                          ? Colors.white70
+                                          : Colors.black87)),
                               actions: [
-                                TextButton(onPressed: () => Get.back(result: false), child: const Text('Cancel')),
+                                TextButton(
+                                    onPressed: () => Get.back(result: false),
+                                    child: const Text('Cancel')),
                                 FilledButton(
-                                  onPressed: () => Get.back(result: true), 
-                                  style: FilledButton.styleFrom(backgroundColor: _appleBlue(context)),
-                                  child: const Text('Continue')
-                                ),
+                                    onPressed: () => Get.back(result: true),
+                                    style: FilledButton.styleFrom(
+                                        backgroundColor: _appleBlue(context)),
+                                    child: const Text('Continue')),
                               ],
                             ),
                           );
@@ -862,7 +909,8 @@ class ChatView extends GetView<ChatController> {
                           color: _appleBlue(context).withValues(alpha: 0.15),
                           shape: BoxShape.circle,
                         ),
-                        child: Icon(Icons.add_rounded, size: 22, color: _appleBlue(context)),
+                        child: Icon(Icons.add_rounded,
+                            size: 22, color: _appleBlue(context)),
                       ),
                     ),
                   );
@@ -964,12 +1012,13 @@ class ChatView extends GetView<ChatController> {
                       color: isDark ? Colors.white : Colors.black))),
           Divider(height: 0.5, color: _sep(context)),
           Flexible(child: Obx(() {
-            if (controller.sessions.isEmpty)
+            if (controller.sessions.isEmpty) {
               return Padding(
                   padding: const EdgeInsets.all(32),
                   child: Text('No conversations yet',
                       style: GoogleFonts.inter(
                           color: Theme.of(context).hintColor)));
+            }
             return ListView.separated(
               shrinkWrap: true,
               itemCount: controller.sessions.length,
@@ -1076,7 +1125,9 @@ class ChatView extends GetView<ChatController> {
           r != 0x200C &&
           r != 0x200D &&
           r != 0xFEFF &&
-          r != 0xFFFD) return true;
+          r != 0xFFFD) {
+        return true;
+      }
     }
     return false;
   }
@@ -1552,8 +1603,8 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.stop_rounded,
-                            size: 12, color: const Color(0xFFFF3B30)),
+                        const Icon(Icons.stop_rounded,
+                            size: 12, color: Color(0xFFFF3B30)),
                         const SizedBox(width: 4),
                         Text(
                           'Cancel',

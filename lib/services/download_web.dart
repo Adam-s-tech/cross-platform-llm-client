@@ -1,4 +1,5 @@
 /// Web stub — model downloads are not supported on web.
+library;
 
 Future<String> getModelsDir() async => '/web/models';
 

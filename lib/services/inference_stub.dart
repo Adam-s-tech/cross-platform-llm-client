@@ -1,5 +1,6 @@
 /// Stub inference engine for platforms that don't support local GGUF models
 /// (Web). All methods are no-ops that return appropriate errors.
+library;
 
 bool get supportsLocalInference => false;
 

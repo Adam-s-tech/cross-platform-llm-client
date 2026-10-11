@@ -167,7 +167,7 @@ Steps:''';
         final cmd = trimmed.substring(4).trim();
         steps.add(TaskStep(
           index: stepIndex++,
-          description: currentDesc ?? 'Step ${stepIndex}',
+          description: currentDesc ?? 'Step $stepIndex',
           command: cmd,
         ));
         currentDesc = null;

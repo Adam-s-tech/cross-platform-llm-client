@@ -1,6 +1,10 @@
 /// Web stub for sd_ffi_bindings.dart.
 /// Contains only the enums and extensions needed by UI code.
 /// No dart:ffi imports — safe for web compilation.
+library;
+
+// Mirrors stable-diffusion.h enum names.
+// ignore_for_file: constant_identifier_names
 
 enum QuantizationType {
   f32,

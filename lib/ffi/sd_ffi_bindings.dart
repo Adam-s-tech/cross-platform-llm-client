@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 
 // ---------------------------------------------------------------------------
 // Enums (must match stable-diffusion.h)
+// ignore_for_file: constant_identifier_names
 // ---------------------------------------------------------------------------
 
 enum QuantizationType {
@@ -356,8 +357,9 @@ class SdFfiBindings {
   }
 
   static void _lookupFunctions() {
-    if (_lib == null)
+    if (_lib == null) {
       throw StateError('FFI library not loaded. Call initialize() first.');
+    }
 
     setProgressCallback = _lib!.lookupFunction<SdFfiSetProgressCallbackNative,
         SdFfiSetProgressCallback>('sd_ffi_set_progress_callback');

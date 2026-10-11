@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io' show File, Platform;
-import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
@@ -165,7 +164,7 @@ class LocalImageService extends GetxService {
         
         if (isCoreML) {
           print('[LocalImageService] Using Apple CoreML backend...');
-          final coreMlChannel = MethodChannel('coreml_stable_diffusion');
+          const coreMlChannel = MethodChannel('coreml_stable_diffusion');
           final result = await coreMlChannel.invokeMethod('initModel', {'path': modelPath});
           
           if (result is String && result.contains('loaded successfully')) {
@@ -315,7 +314,7 @@ class LocalImageService extends GetxService {
     latestLog.value = '';
     if (Platform.isIOS) {
       if (currentBackend.value == Backend.metal) {
-        final coreMlChannel = MethodChannel('coreml_stable_diffusion');
+        const coreMlChannel = MethodChannel('coreml_stable_diffusion');
         await coreMlChannel.invokeMethod('unloadModel');
       } else {
         await SdFlutterAndroid.unloadModel();
@@ -400,7 +399,7 @@ class LocalImageService extends GetxService {
       if (Platform.isIOS) {
         if (currentBackend.value == Backend.metal) {
           // CoreML Route
-          final coreMlChannel = MethodChannel('coreml_stable_diffusion');
+          const coreMlChannel = MethodChannel('coreml_stable_diffusion');
           coreMlChannel.setMethodCallHandler((call) async {
             if (call.method == 'onProgress') {
               final args = call.arguments as Map;

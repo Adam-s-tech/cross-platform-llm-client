@@ -17,10 +17,10 @@ _Generated on pixel 6 with 20 step_
 - **Local Inference on Android** — Download and run GGUF models directly on your phone using GPU-accelerated inference (Vulkan). No internet required after download.
 - **Cloud API Fallback** — Seamlessly switch to OpenAI, Anthropic, Google Gemini, or Kimi (Moonshot AI) when you need more power or are on unsupported platforms.
 - **Multimodal Chat** — Send text and images in conversations. Vision support works with both local models (Qwen2-VL) and cloud providers.
-- **Persistent Sessions** — All chats, tasks, and settings are stored locally via Hive. Nothing leaves your device unless you explicitly choose cloud mode.
+- **Persistent Sessions** — All chats and settings are stored locally via Hive. Nothing leaves your device unless you explicitly choose cloud mode.
 - **Background Services** — Firebase Cloud Messaging integration for push updates and background task handling.
 - **Smart Auto-Configuration** — On first launch, the app detects your device's RAM and recommends optimal context size and token limits automatically.
-- **Task Management** — A dedicated task view for structured AI-assisted workflows alongside free-form chat.
+- **Task Management (in development)** — A task view for structured, multi-step AI workflows is being built. It is not available in the app yet.
 
 ---
 
@@ -40,7 +40,7 @@ _Generated on pixel 6 with 20 step_
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        UI Layer                              │
-│   ChatView / TaskView / ModelView / SettingsView            │
+│   ChatView / ModelView / ServerView / SettingsView          │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐

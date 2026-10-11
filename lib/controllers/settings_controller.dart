@@ -613,7 +613,7 @@ class SettingsController extends GetxController {
       final response = await http.get(
         Uri.parse('${AppConstants.nvidiaEndpoint}/models'),
         headers: {'Authorization': 'Bearer ${nvidiaKey.value.trim()}'},
-      );
+      ).timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
         Get.find<AppLogService>().warning(
           'NVIDIA model list request failed',

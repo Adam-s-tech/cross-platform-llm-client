@@ -51,6 +51,7 @@ class SdIsolateProcessor {
   final _receivePort = ReceivePort();
   final _initCompleter = Completer<void>();
   final _modelLoadedCompleter = Completer<bool>();
+  final _disposedCompleter = Completer<void>();
   bool _disposed = false;
 
   Future<bool> get modelLoaded => _modelLoadedCompleter.future;
@@ -133,11 +134,15 @@ class SdIsolateProcessor {
             case 'error':
               _handleError(message['message']);
               break;
+            case 'disposed':
+              if (!_disposedCompleter.isCompleted) _disposedCompleter.complete();
+              break;
           }
         }
       });
     } catch (e) {
       print('[SdIsolateProcessor] Isolate.spawn failed: $e');
+      if (!_initCompleter.isCompleted) _initCompleter.complete();
       if (!_modelLoadedCompleter.isCompleted) {
         _modelLoadedCompleter.complete(false);
       }
@@ -175,6 +180,9 @@ class SdIsolateProcessor {
   }
 
   void _handleError(String error) {
+    // A backend that fails to initialise never sends its SendPort; complete
+    // init anyway so generate()/dispose() can't wait on it forever.
+    if (!_initCompleter.isCompleted) _initCompleter.complete();
     if (!_modelLoadedCompleter.isCompleted) {
       _modelLoadedCompleter.complete(false);
     }
@@ -235,11 +243,25 @@ class SdIsolateProcessor {
     if (_disposed) return;
     _disposed = true;
 
-    await _initCompleter.future;
-    _sendPort?.send({'command': 'dispose'});
+    // Anyone still waiting on an image would otherwise wait forever.
+    final pending = _activeCompleter;
+    if (pending != null && !pending.isCompleted) {
+      pending.complete(GenerationResult(error: 'Model was unloaded'));
+    }
 
-    // Give isolate time to clean up
-    await Future.delayed(const Duration(milliseconds: 200));
+    // Don't block on an isolate that never finished starting up.
+    await _initCompleter.future
+        .timeout(const Duration(seconds: 2), onTimeout: () {});
+    final sendPort = _sendPort;
+    if (sendPort != null) {
+      sendPort.send({'command': 'dispose'});
+      // Wait for the native context to be freed. If the isolate is stuck in
+      // a native call it can't answer, so give up eventually and kill it.
+      await _disposedCompleter.future
+          .timeout(const Duration(seconds: 10), onTimeout: () {
+        print('[SdIsolateProcessor] Isolate did not confirm dispose; killing');
+      });
+    }
 
     _receivePort.close();
     _progressController.close();

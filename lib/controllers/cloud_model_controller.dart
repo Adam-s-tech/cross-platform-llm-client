@@ -377,7 +377,8 @@ class CloudModelController extends GetxController {
     errorByProvider.remove(provider);
 
     try {
-      final response = await _requestModelList(provider);
+      final response = await _requestModelList(provider)
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
         final detail = '${response.statusCode}: ${_shortBody(response.body)}';
         errorByProvider[provider] = detail;

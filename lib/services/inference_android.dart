@@ -430,10 +430,12 @@ class InferenceEngine {
     });
 
     // Hard timeout
-    Future.delayed(const Duration(seconds: 180), () {
+    Future.delayed(_hardTimeout(maxTokens, minSeconds: 180), () {
       if (!completed) {
         final partial = buffer.toString();
-        finish(partial.isEmpty ? 'ERROR: Generation timed out.' : partial);
+        finish(partial.isEmpty
+            ? 'ERROR: Generation timed out.'
+            : '$partial$_timeLimitNote');
       }
     });
 
@@ -547,12 +549,12 @@ class InferenceEngine {
         }
       });
 
-      Future.delayed(const Duration(seconds: 240), () {
+      Future.delayed(_hardTimeout(maxTokens, minSeconds: 240), () {
         if (!completed) {
           final partial = buffer.toString();
           finish(partial.isEmpty
               ? 'ERROR: LiteRT-LM multimodal generation timed out.'
-              : partial);
+              : '$partial$_timeLimitNote');
         }
       });
 
@@ -605,12 +607,12 @@ class InferenceEngine {
       }
     });
 
-    Future.delayed(const Duration(seconds: 180), () {
+    Future.delayed(_hardTimeout(maxTokens, minSeconds: 180), () {
       if (!completed) {
         final partial = buffer.toString();
         finish(partial.isEmpty
             ? 'ERROR: LiteRT-LM generation timed out.'
-            : partial);
+            : '$partial$_timeLimitNote');
       }
     });
 
@@ -737,6 +739,15 @@ class InferenceEngine {
     final match = RegExp(r'(\d{3})').firstMatch(gpuName.toLowerCase());
     return match != null ? (int.tryParse(match.group(1)!) ?? 0) : 0;
   }
+
+  /// Safety cap on a single generation. It scales with the token budget
+  /// (allowing ~1 token/s) so slow phones aren't cut off mid-answer; the idle
+  /// timeouts already catch a model that has stopped producing tokens.
+  static Duration _hardTimeout(int maxTokens, {int minSeconds = 180}) =>
+      Duration(seconds: maxTokens > minSeconds ? maxTokens : minSeconds);
+
+  static const _timeLimitNote =
+      '\n\n⚠️ Stopped: this reply hit the time limit for one response.';
 
   String _runtimeFor(String modelPath, String? modelRuntime) {
     final runtime = modelRuntime?.toLowerCase();

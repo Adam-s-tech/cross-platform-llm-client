@@ -131,6 +131,10 @@ class LocalImageService extends GetxService {
   Future<String> loadModel(String modelPath,
       {String? modelName, String? taesdPath}) async {
     if (isLoadingModel.value) return 'ERROR: Model is already loading.';
+    if (_nativeJobRunning) {
+      return 'ERROR: An image is still generating. Wait for it to finish, '
+          'then load the model.';
+    }
 
     try {
       if (isModelLoaded.value) {
@@ -308,6 +312,16 @@ class LocalImageService extends GetxService {
   }
 
   Future<void> unloadModel() async {
+    // Tearing down the isolate while sd.cpp is mid-render leaks the native
+    // context (GBs) and can crash, so wait until the job has finished.
+    if (_nativeJobRunning) {
+      Get.snackbar(
+        'Image still generating',
+        'Wait for the current image to finish, then unload the model.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
     print('[LocalImageService] Unloading model...');
     isModelLoaded.value = false;
     loadedModelName.value = '';

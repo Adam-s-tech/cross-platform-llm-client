@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
@@ -76,6 +77,17 @@ class CloudService extends GetxService {
 
   http.Client? _activeStreamClient;
 
+  // Without timeouts a stalled connection (captive Wi-Fi, a hung custom
+  // endpoint) leaves the chat loading forever.
+  static const _connectTimeout = Duration(seconds: 30);
+  static const _responseTimeout = Duration(seconds: 120);
+  /// Max gap between streamed chunks. Not const so tests can shorten it.
+  static Duration streamIdleTimeout = const Duration(seconds: 60);
+
+  Future<http.Response> _post(Uri url,
+          {Map<String, String>? headers, Object? body}) =>
+      http.post(url, headers: headers, body: body).timeout(_responseTimeout);
+
   /// Aborts the streaming response in progress, if any. Closing the client
   /// drops the connection, so the provider stops generating (and billing).
   void cancel() {
@@ -139,6 +151,10 @@ class CloudService extends GetxService {
           return await _sendOpenAI(
               messages, imageBase64, temperature, maxTokens);
       }
+    } on TimeoutException {
+      Get.find<AppLogService>().warning('Cloud API request timed out');
+      return "ERROR: $_providerLabel didn't respond in time. Check your "
+          'connection and try again.';
     } catch (e) {
       Get.find<AppLogService>().error('Cloud API request failed', details: e);
       return 'ERROR: Cloud API request failed — $e';
@@ -231,7 +247,7 @@ class CloudService extends GetxService {
       }
     }
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse(AppConstants.openaiEndpoint),
       headers: {
         'Authorization': 'Bearer $_apiKey',
@@ -304,7 +320,7 @@ class CloudService extends GetxService {
     };
     if (systemMsg != null) body['system'] = systemMsg;
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse(AppConstants.anthropicEndpoint),
       headers: {
         'x-api-key': _apiKey,
@@ -352,7 +368,7 @@ class CloudService extends GetxService {
     // messages (http's ClientException includes the full URI).
     final url = '${AppConstants.googleEndpoint}/$_model:generateContent';
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
@@ -396,7 +412,7 @@ class CloudService extends GetxService {
       apiMessages.add({'role': msg['role'], 'content': msg['content']});
     }
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse(AppConstants.kimiEndpoint),
       headers: {
         'Authorization': 'Bearer $_apiKey',
@@ -445,7 +461,7 @@ class CloudService extends GetxService {
       }
     }
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('${AppConstants.nvidiaEndpoint}/chat/completions'),
       headers: {
         'Authorization': 'Bearer $_apiKey',
@@ -536,7 +552,7 @@ class CloudService extends GetxService {
 
     apiMessages.addAll(_buildOpenAICompatibleMessages(messages, imageBase64));
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse(endpoint),
       headers: {
         'Authorization': 'Bearer $_apiKey',
@@ -587,7 +603,7 @@ class CloudService extends GetxService {
     final client = http.Client();
     _activeStreamClient = client;
     try {
-      final response = await client.send(request);
+      final response = await client.send(request).timeout(_connectTimeout);
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
         return 'ERROR: $providerLabel returned ${response.statusCode} — $body';
@@ -595,33 +611,69 @@ class CloudService extends GetxService {
 
       final buffer = StringBuffer();
       final lines = response.stream
+          .timeout(streamIdleTimeout)
           .transform(utf8.decoder)
           .transform(const LineSplitter());
+
+      // Providers can fail after the 200 (rate limits, moderation, upstream
+      // errors) by sending an error event, or just drop the connection. Track
+      // both so they aren't shown as a normal, complete reply.
+      var finished = false;
+      String? streamError;
 
       await for (final line in lines) {
         final trimmed = line.trim();
         if (trimmed.isEmpty || !trimmed.startsWith('data:')) continue;
 
         final payload = trimmed.substring(5).trim();
-        if (payload == '[DONE]') break;
+        if (payload == '[DONE]') {
+          finished = true;
+          break;
+        }
 
+        Map? data;
         try {
-          final data = jsonDecode(payload);
-          final choice = (data['choices'] as List?)?.isNotEmpty == true
-              ? data['choices'][0] as Map
-              : null;
-          final delta = choice?['delta'] as Map?;
-          final token = delta?['content']?.toString();
-          if (token != null && token.isNotEmpty) {
-            buffer.write(token);
-            onToken(token);
-          }
+          final decoded = jsonDecode(payload);
+          if (decoded is Map) data = decoded;
         } catch (_) {
-          // Ignore malformed keep-alive chunks and continue reading.
+          continue; // Malformed keep-alive chunk.
+        }
+        if (data == null) continue;
+
+        final error = data['error'];
+        if (error != null) {
+          streamError = error is Map
+              ? '${error['message'] ?? error['code'] ?? error}'
+              : '$error';
+          break;
+        }
+
+        final choices = data['choices'];
+        final choice =
+            choices is List && choices.isNotEmpty ? choices.first : null;
+        if (choice is! Map) continue;
+        if (choice['finish_reason'] != null) finished = true;
+        final delta = choice['delta'];
+        final token = delta is Map ? delta['content']?.toString() : null;
+        if (token != null && token.isNotEmpty) {
+          buffer.write(token);
+          onToken(token);
         }
       }
 
-      return buffer.toString();
+      final text = buffer.toString();
+      if (streamError != null) {
+        return text.isEmpty
+            ? 'ERROR: $providerLabel returned an error — $streamError'
+            : '$text\n\n⚠️ $providerLabel stopped with an error: $streamError';
+      }
+      if (text.isEmpty) {
+        return 'ERROR: $providerLabel returned an empty response.';
+      }
+      if (!finished) {
+        return '$text\n\n⚠️ The response was cut off before it finished.';
+      }
+      return text;
     } finally {
       if (identical(_activeStreamClient, client)) _activeStreamClient = null;
       client.close();
@@ -681,8 +733,9 @@ class CloudService extends GetxService {
     request.fields['model'] = _model;
     request.fields['output_format'] = 'jpeg';
 
-    final response = await request.send();
-    final responseBody = await response.stream.bytesToString();
+    final response = await request.send().timeout(_responseTimeout);
+    final responseBody =
+        await response.stream.bytesToString().timeout(_responseTimeout);
 
     if (response.statusCode != 200) {
       return 'ERROR: Stability AI returned ${response.statusCode} — $responseBody';

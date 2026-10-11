@@ -32,6 +32,9 @@ abstract class FlutterLitertLmPlatform extends PlatformInterface {
   /// Dispose a conversation and release its resources.
   Future<void> disposeConversation(String conversationId);
 
+  /// Cancel any generation in progress on the conversation.
+  Future<void> cancelConversation(String conversationId);
+
   /// Send a message synchronously and return the full response.
   Future<Map<String, dynamic>> sendMessage(
     String conversationId,

@@ -26,6 +26,9 @@ class MockFlutterLitertLmPlatform
   Future<void> disposeConversation(String conversationId) async {}
 
   @override
+  Future<void> cancelConversation(String conversationId) async {}
+
+  @override
   Future<Map<String, dynamic>> sendMessage(
     String conversationId,
     List<Map<String, dynamic>> contents,

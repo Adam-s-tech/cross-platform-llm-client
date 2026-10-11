@@ -450,13 +450,21 @@ class InferenceEngine {
     bool completed = false;
     bool hasVisibleOutput = false;
     var tokenCount = 0;
+    final conversation = _liteConversation;
 
-    void finish(String result) {
+    // Unless the stream ended on its own, the native engine is still
+    // generating: cancel it, otherwise it keeps running and blocks the next
+    // conversation reset.
+    void finish(String result, {bool cancelNative = true}) {
       if (!completed && !_disposed) {
         completed = true;
         _idleTimer?.cancel();
         _subscription?.cancel();
         _onStop = null;
+        if (cancelNative) {
+          unawaited(conversation?.cancel().catchError((_) {}) ??
+              Future<void>.value());
+        }
         if (!completer.isCompleted) completer.complete(result);
       }
     }
@@ -503,7 +511,7 @@ class InferenceEngine {
           _liteConversationHasMessages = true;
           print(
               '[Inference] LiteRT-LM multimodal stream done - $tokenCount chunks');
-          finish(buffer.toString());
+          finish(buffer.toString(), cancelNative: false);
         },
         onError: (error) {
           print('[Inference] LiteRT-LM multimodal stream error: $error');
@@ -556,7 +564,7 @@ class InferenceEngine {
       onDone: () {
         _liteConversationHasMessages = true;
         print('[Inference] LiteRT-LM stream done - $tokenCount chunks');
-        finish(buffer.toString());
+        finish(buffer.toString(), cancelNative: false);
       },
       onError: (error) {
         print('[Inference] LiteRT-LM stream error: $error');
@@ -627,6 +635,9 @@ class InferenceEngine {
     unawaited(_subscription?.cancel() ?? Future<void>.value());
     if (_isLiteRt) {
       _liteConversationHasMessages = true;
+      try {
+        await _liteConversation?.cancel();
+      } catch (_) {}
       return;
     }
     try {

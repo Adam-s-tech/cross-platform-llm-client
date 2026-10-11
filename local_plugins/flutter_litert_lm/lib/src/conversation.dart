@@ -91,6 +91,12 @@ class LiteLmConversation {
     return LiteLmMessage.fromMap(response);
   }
 
+  /// Stop the generation currently running on this conversation, if any.
+  Future<void> cancel() async {
+    if (_disposed) return;
+    await FlutterLitertLmPlatform.instance.cancelConversation(_id);
+  }
+
   /// Release native resources for this conversation.
   Future<void> dispose() async {
     if (_disposed) return;

@@ -44,6 +44,14 @@ class MethodChannelFlutterLitertLm extends FlutterLitertLmPlatform {
   }
 
   @override
+  Future<void> cancelConversation(String conversationId) async {
+    await _methodChannel.invokeMethod(
+      'cancelConversation',
+      {'conversationId': conversationId},
+    );
+  }
+
+  @override
   Future<Map<String, dynamic>> sendMessage(
     String conversationId,
     List<Map<String, dynamic>> contents,

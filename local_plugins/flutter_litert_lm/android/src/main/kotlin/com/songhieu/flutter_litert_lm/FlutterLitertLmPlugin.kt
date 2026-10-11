@@ -46,7 +46,7 @@ class FlutterLitertLmPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Str
         eventChannel.setStreamHandler(null)
         scope.cancel()
         // Clean up all resources
-        conversations.values.forEach { it.close() }
+        conversations.values.forEach { closeConversation(it) }
         conversations.clear()
         engines.values.forEach { it.close() }
         engines.clear()
@@ -66,6 +66,7 @@ class FlutterLitertLmPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Str
             "disposeEngine" -> handleDisposeEngine(call, result)
             "createConversation" -> handleCreateConversation(call, result)
             "disposeConversation" -> handleDisposeConversation(call, result)
+            "cancelConversation" -> handleCancelConversation(call, result)
             "sendMessage" -> handleSendMessage(call, result)
             "startMessageStream" -> handleStartMessageStream(call, result)
             "countTokens" -> handleCountTokens(call, result)
@@ -112,17 +113,25 @@ class FlutterLitertLmPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Str
         }
     }
 
+    // close() blocks until any in-flight generation finishes, so it must never
+    // run on the main thread (doing so caused ANRs). Cancel first, close on IO.
     private fun handleDisposeEngine(call: MethodCall, result: Result) {
         val engineId = call.argument<String>("engineId")!!
-        // Dispose all conversations belonging to this engine
-        conversationEngineMap.entries
+        val owned = conversationEngineMap.entries
             .filter { it.value == engineId }
-            .forEach { (convId, _) ->
-                conversations.remove(convId)?.close()
+            .mapNotNull { (convId, _) ->
                 conversationEngineMap.remove(convId)
+                conversations.remove(convId)
             }
-        engines.remove(engineId)?.close()
-        result.success(null)
+        val engine = engines.remove(engineId)
+        scope.launch {
+            owned.forEach { closeConversation(it) }
+            try {
+                engine?.close()
+            } catch (_: Exception) {
+            }
+            withContext(Dispatchers.Main) { result.success(null) }
+        }
     }
 
     private fun handleCreateConversation(call: MethodCall, result: Result) {
@@ -157,9 +166,32 @@ class FlutterLitertLmPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Str
 
     private fun handleDisposeConversation(call: MethodCall, result: Result) {
         val convId = call.argument<String>("conversationId")!!
-        conversations.remove(convId)?.close()
+        val conversation = conversations.remove(convId)
         conversationEngineMap.remove(convId)
+        scope.launch {
+            conversation?.let { closeConversation(it) }
+            withContext(Dispatchers.Main) { result.success(null) }
+        }
+    }
+
+    private fun handleCancelConversation(call: MethodCall, result: Result) {
+        val convId = call.argument<String>("conversationId")!!
+        try {
+            conversations[convId]?.cancelProcess()
+        } catch (_: Exception) {
+        }
         result.success(null)
+    }
+
+    private fun closeConversation(conversation: Conversation) {
+        try {
+            conversation.cancelProcess()
+        } catch (_: Exception) {
+        }
+        try {
+            conversation.close()
+        } catch (_: Exception) {
+        }
     }
 
     private fun handleSendMessage(call: MethodCall, result: Result) {

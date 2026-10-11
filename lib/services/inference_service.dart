@@ -32,6 +32,13 @@ class InferenceService extends GetxService {
   final streamingText = ''.obs;
   final gpuName = ''.obs;
   final gpuLayersUsed = 0.obs;
+  int _generationId = 0;
+
+  /// Incremented whenever a generation is stopped early (by the user, a
+  /// newer generation, or a disconnecting server client). Callers compare it
+  /// before/after generate() to detect that their result was cut short.
+  int get stopCount => _stopCount;
+  int _stopCount = 0;
   final isGpuAccelerated = false.obs;
   final loadedModelRuntime = ''.obs;
   final loadedBackend = ''.obs;
@@ -247,6 +254,7 @@ class InferenceService extends GetxService {
     String source = 'chat',
     String? imagePath,
     String? audioPath,
+    int? maxTokens,
     void Function(String token)? onToken,
   }) async {
     if (!supportsLocalInference || _engine == null || !isModelLoaded.value) {
@@ -264,6 +272,11 @@ class InferenceService extends GetxService {
         await Future.delayed(const Duration(milliseconds: 300));
       }
     }
+
+    // Identifies this generation so a stopped one that finishes late can't
+    // reset the state of the generation that replaced it.
+    final generationId = ++_generationId;
+    bool isCurrent() => generationId == _generationId;
 
     isGenerating.value = true;
     tokenCount.value = 0;
@@ -290,22 +303,27 @@ class InferenceService extends GetxService {
           ) ??
           AppConstants.defaultTemperature;
 
-      final maxTokens = _hive.getSetting<int>(
+      final settingMaxTokens = _hive.getSetting<int>(
             AppConstants.keyMaxTokens,
             defaultValue: AppConstants.defaultMaxTokens,
           ) ??
           AppConstants.defaultMaxTokens;
+      final effectiveMaxTokens = (maxTokens != null && maxTokens > 0)
+          ? (maxTokens < settingMaxTokens ? maxTokens : settingMaxTokens)
+          : settingMaxTokens;
 
       final result = await _engine!.generate(
         prompt: prompt,
         conversationHistory: conversationHistory,
         systemPrompt: systemPrompt ?? AppConstants.systemPrompt,
         modelName: loadedModelName.value,
-        maxTokens: maxTokens,
+        maxTokens: effectiveMaxTokens,
         temperature: temperature,
         imagePath: imagePath,
         audioPath: audioPath,
+        source: source,
         onToken: (token) {
+          if (!isCurrent()) return;
           firstVisibleTokenAt ??= DateTime.now();
           tokenCount.value++;
           streamingText.value += token;
@@ -327,11 +345,14 @@ class InferenceService extends GetxService {
         },
       );
       tokenFlushTimer?.cancel();
+      if (!isCurrent()) return result;
       flushTokenBuffer();
 
       await refreshContextInfo();
-      isGenerating.value = false;
-      generationSource.value = '';
+      if (isCurrent()) {
+        isGenerating.value = false;
+        generationSource.value = '';
+      }
 
       // Detect Tensor SoC + Gemma Q4_K_M corruption: model outputs only
       // special tokens and terminates immediately with empty result.
@@ -351,17 +372,21 @@ class InferenceService extends GetxService {
 
       return result;
     } catch (e) {
-      isGenerating.value = false;
-      generationSource.value = '';
-      streamingText.value = '';
       tokenFlushTimer?.cancel();
-      flushTokenBuffer();
+      if (isCurrent()) {
+        isGenerating.value = false;
+        generationSource.value = '';
+        streamingText.value = '';
+        flushTokenBuffer();
+      }
       Get.find<AppLogService>().error('Local generation failed', details: e);
       return 'ERROR: $e';
     }
   }
 
   Future<void> stopGeneration() async {
+    _generationId++;
+    _stopCount++;
     isGenerating.value = false;
     tokenCount.value = 0;
     generationSource.value = '';

@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get.dart';
+import 'package:privatelm/services/inference_service.dart';
 import 'package:privatelm/services/openai_server_service_io.dart';
 
 void main() {
@@ -85,4 +88,140 @@ void main() {
     res = await send('GET', '/health');
     expect(res.headers.value('access-control-allow-origin'), '*');
   });
+
+  group('generation', () {
+    late FakeInference fake;
+    const json = {'Content-Type': 'application/json'};
+    String chatBody({bool stream = false, int? maxTokens}) => jsonEncode({
+          'messages': [
+            {'role': 'user', 'content': 'hi'}
+          ],
+          if (stream) 'stream': true,
+          if (maxTokens != null) 'max_tokens': maxTokens,
+        });
+
+    setUp(() async {
+      fake = FakeInference();
+      Get.put<InferenceService>(fake);
+      await server.start(port: port);
+    });
+
+    tearDown(Get.reset);
+
+    test('passes max_tokens through to the model', () async {
+      final res = await send('POST', '/v1/chat/completions',
+          headers: json, body: chatBody(maxTokens: 7));
+      expect(res.statusCode, 200);
+      expect(fake.lastMaxTokens, 7);
+    });
+
+    test('rejects with 429 while the app is generating', () async {
+      fake.isGenerating.value = true;
+      final res = await send('POST', '/v1/chat/completions',
+          headers: json, body: chatBody());
+      expect(res.statusCode, 429);
+    });
+
+    test('reports 503 when the generation is interrupted', () async {
+      fake.tokensToEmit = 50;
+      final pending = send('POST', '/v1/chat/completions',
+          headers: json, body: chatBody());
+      await Future.delayed(const Duration(milliseconds: 100));
+      await fake.stopGeneration(); // e.g. the user started a chat reply
+      expect((await pending).statusCode, HttpStatus.serviceUnavailable);
+    });
+
+    test('streams live and stops the model when the client disconnects',
+        () async {
+      fake.tokensToEmit = 1000;
+      final req = await client.openUrl(
+          'POST', Uri.parse('http://127.0.0.1:$port/v1/chat/completions'));
+      req.headers.contentType = ContentType.json;
+      req.write(chatBody(stream: true));
+      final res = await req.close();
+      final firstChunk = Completer<void>();
+      final sub = res.listen((_) {
+        if (!firstChunk.isCompleted) firstChunk.complete();
+      });
+      await firstChunk.future.timeout(const Duration(seconds: 2));
+      await sub.cancel();
+      client.close(force: true);
+      client = HttpClient();
+
+      // The server must notice, stop the model, and free itself up.
+      for (var i = 0; i < 40 && fake.stops == 0; i++) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      expect(fake.stops, 1);
+      await Future.delayed(const Duration(milliseconds: 100));
+      fake.tokensToEmit = 1;
+      final next = await send('POST', '/v1/chat/completions',
+          headers: json, body: chatBody());
+      expect(next.statusCode, 200, reason: 'server must not stay busy');
+    });
+  });
+}
+
+/// Minimal stand-in for InferenceService: tokens are emitted on a timer until
+/// stopped, so tests can observe busy/stop/interrupt behaviour.
+class FakeInference extends GetxService implements InferenceService {
+  @override
+  final isModelLoaded = true.obs;
+  @override
+  final isGenerating = false.obs;
+  @override
+  final loadedModelName = 'fake-model'.obs;
+  @override
+  final generationSource = ''.obs;
+  @override
+  final isVisionLoaded = false.obs;
+  @override
+  final loadedModelRuntime = 'litert'.obs;
+
+  int? lastMaxTokens;
+  int stops = 0;
+  Duration tokenInterval = const Duration(milliseconds: 20);
+  int tokensToEmit = 3;
+  Completer<void>? _stopped;
+
+  @override
+  int get stopCount => stops;
+
+  @override
+  Future<String> generate({
+    required String prompt,
+    String? systemPrompt,
+    List<Map<String, String>>? conversationHistory,
+    String source = 'chat',
+    String? imagePath,
+    String? audioPath,
+    int? maxTokens,
+    void Function(String token)? onToken,
+  }) async {
+    lastMaxTokens = maxTokens;
+    isGenerating.value = true;
+    generationSource.value = source;
+    final stopped = _stopped = Completer<void>();
+    final out = StringBuffer();
+    for (var i = 0; i < tokensToEmit && !stopped.isCompleted; i++) {
+      await Future.any([Future.delayed(tokenInterval), stopped.future]);
+      if (stopped.isCompleted) break;
+      out.write('t$i ');
+      onToken?.call('t$i ');
+    }
+    isGenerating.value = false;
+    generationSource.value = '';
+    return out.toString();
+  }
+
+  @override
+  Future<void> stopGeneration() async {
+    stops++;
+    isGenerating.value = false;
+    generationSource.value = '';
+    if (_stopped != null && !_stopped!.isCompleted) _stopped!.complete();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

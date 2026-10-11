@@ -131,7 +131,10 @@ class OpenAiServerService {
           status: HttpStatus.internalServerError,
         );
       } catch (_) {
-        await request.response.close();
+        // The response may already be closed or detached (streaming).
+        try {
+          await request.response.close();
+        } catch (_) {}
       }
     }
   }
@@ -191,41 +194,32 @@ class OpenAiServerService {
   }
 
   Future<void> _handleChatCompletions(HttpRequest request) async {
-    final body = await _readJson(request);
     final inference = Get.find<InferenceService>();
-    final modelError = _localModelError(inference);
-    if (modelError != null) {
-      await _json(request, {'error': modelError},
-          status: HttpStatus.badRequest);
-      return;
-    }
-    if (_busy) {
-      await _json(request, {'error': 'Model is busy'}, status: 429);
-      return;
-    }
-
-    final parsed = await _parseChatRequest(body);
-    if (parsed.error != null) {
-      await _json(request, {'error': parsed.error},
-          status: HttpStatus.badRequest);
-      return;
-    }
-
-    final model = (body['model'] as String?)?.trim();
-    if (model != null &&
-        model.isNotEmpty &&
-        model != inference.loadedModelName.value) {
-      await _json(request, {'error': 'Model not found or not loaded'},
-          status: HttpStatus.notFound);
-      return;
-    }
-
-    final stream = body['stream'] == true;
-    _busy = true;
+    if (!await _acquire(request, inference)) return;
+    final tempFiles = <File>[];
     try {
-      if (stream) {
-        await _streamChatResponse(request, inference, parsed);
+      final body = await _readJson(request);
+      final model = (body['model'] as String?)?.trim();
+      if (model != null &&
+          model.isNotEmpty &&
+          model != inference.loadedModelName.value) {
+        await _json(request, {'error': 'Model not found or not loaded'},
+            status: HttpStatus.notFound);
+        return;
+      }
+
+      final parsed = await _parseChatRequest(body, tempFiles);
+      if (parsed.error != null) {
+        await _json(request, {'error': parsed.error},
+            status: HttpStatus.badRequest);
+        return;
+      }
+
+      final maxTokens = _maxTokens(body);
+      if (body['stream'] == true) {
+        await _streamChatResponse(request, inference, parsed, maxTokens);
       } else {
+        final stopsBefore = inference.stopCount;
         final text = await inference.generate(
           prompt: parsed.prompt,
           systemPrompt: parsed.systemPrompt ??
@@ -234,48 +228,85 @@ class OpenAiServerService {
           source: 'server',
           imagePath: parsed.imagePath,
           audioPath: parsed.audioPath,
+          maxTokens: maxTokens,
         );
+        if (inference.stopCount != stopsBefore) {
+          await _interrupted(request);
+          return;
+        }
         await _json(
             request, _chatResponse(inference.loadedModelName.value, text));
       }
     } finally {
       _busy = false;
-      await parsed.cleanup();
+      await _deleteFiles(tempFiles);
     }
   }
 
-  Future<void> _handleCompletions(HttpRequest request) async {
-    final body = await _readJson(request);
-    final inference = Get.find<InferenceService>();
+  /// Claims the model for one request. Rejects before the body is read when
+  /// a server request or an in-app generation is already running, and marks
+  /// the server busy synchronously so concurrent requests can't both pass.
+  Future<bool> _acquire(HttpRequest request, InferenceService inference) async {
     final modelError = _localModelError(inference);
     if (modelError != null) {
       await _json(request, {'error': modelError},
           status: HttpStatus.badRequest);
-      return;
+      return false;
     }
-    if (_busy) {
+    if (_busy || inference.isGenerating.value) {
       await _json(request, {'error': 'Model is busy'}, status: 429);
-      return;
+      return false;
     }
-
-    final prompt = body['prompt'];
-    if (prompt is! String || prompt.trim().isEmpty) {
-      await _json(request, {'error': 'prompt is required'},
-          status: HttpStatus.badRequest);
-      return;
-    }
-
-    final stream = body['stream'] == true;
     _busy = true;
+    return true;
+  }
+
+  Future<void> _interrupted(HttpRequest request) => _json(
+        request,
+        {'error': 'Generation was interrupted (the app started its own response)'},
+        status: HttpStatus.serviceUnavailable,
+      );
+
+  int? _maxTokens(Map<String, dynamic> body) {
+    final raw = body['max_completion_tokens'] ?? body['max_tokens'];
+    return raw is num && raw > 0 ? raw.toInt() : null;
+  }
+
+  Future<void> _deleteFiles(List<File> files) async {
+    for (final file in files) {
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _handleCompletions(HttpRequest request) async {
+    final inference = Get.find<InferenceService>();
+    if (!await _acquire(request, inference)) return;
     try {
-      if (stream) {
-        await _streamCompletionResponse(request, inference, prompt);
+      final body = await _readJson(request);
+      final prompt = body['prompt'];
+      if (prompt is! String || prompt.trim().isEmpty) {
+        await _json(request, {'error': 'prompt is required'},
+            status: HttpStatus.badRequest);
+        return;
+      }
+
+      final maxTokens = _maxTokens(body);
+      if (body['stream'] == true) {
+        await _streamCompletionResponse(request, inference, prompt, maxTokens);
       } else {
+        final stopsBefore = inference.stopCount;
         final text = await inference.generate(
           prompt: prompt,
           systemPrompt: _defaultSystemPrompt(inference.loadedModelName.value),
           source: 'server',
+          maxTokens: maxTokens,
         );
+        if (inference.stopCount != stopsBefore) {
+          await _interrupted(request);
+          return;
+        }
         await _json(request, {
           'id': 'cmpl-${_id()}',
           'object': 'text_completion',
@@ -298,8 +329,10 @@ class OpenAiServerService {
     return null;
   }
 
+  /// Temp files are appended to [tempFiles] as they're written so the caller
+  /// can always delete them, including when parsing fails part-way.
   Future<_ParsedChatRequest> _parseChatRequest(
-      Map<String, dynamic> body) async {
+      Map<String, dynamic> body, List<File> tempFiles) async {
     final rawMessages = body['messages'];
     if (rawMessages is! List || rawMessages.isEmpty) {
       return _ParsedChatRequest.error('messages must be a non-empty array');
@@ -310,7 +343,6 @@ class OpenAiServerService {
     var lastUserText = '';
     String? imagePath;
     String? audioPath;
-    final tempFiles = <File>[];
 
     for (var i = 0; i < rawMessages.length; i++) {
       final raw = rawMessages[i];
@@ -321,11 +353,10 @@ class OpenAiServerService {
       if (role != 'system' && role != 'user' && role != 'assistant') {
         return _ParsedChatRequest.error('message[$i].role is unsupported');
       }
-      final contentResult = await _parseContent(raw['content']);
+      final contentResult = await _parseContent(raw['content'], tempFiles);
       if (contentResult.error != null) {
         return _ParsedChatRequest.error(contentResult.error!);
       }
-      tempFiles.addAll(contentResult.tempFiles);
       imagePath ??= contentResult.imagePath;
       audioPath ??= contentResult.audioPath;
 
@@ -353,11 +384,11 @@ class OpenAiServerService {
       history: history,
       imagePath: imagePath,
       audioPath: audioPath,
-      tempFiles: tempFiles,
     );
   }
 
-  Future<_ContentResult> _parseContent(dynamic content) async {
+  Future<_ContentResult> _parseContent(
+      dynamic content, List<File> tempFiles) async {
     if (content is String) return _ContentResult(text: content);
     if (content is! List) {
       return _ContentResult.error(
@@ -367,7 +398,6 @@ class OpenAiServerService {
     final text = StringBuffer();
     String? imagePath;
     String? audioPath;
-    final tempFiles = <File>[];
 
     for (final part in content) {
       if (part is! Map) {
@@ -407,7 +437,6 @@ class OpenAiServerService {
       text: text.toString(),
       imagePath: imagePath,
       audioPath: audioPath,
-      tempFiles: tempFiles,
     );
   }
 
@@ -455,20 +484,22 @@ class OpenAiServerService {
     HttpRequest request,
     InferenceService inference,
     _ParsedChatRequest parsed,
+    int? maxTokens,
   ) async {
     final response = request.response;
     _addCorsHeaders(response);
-    response.statusCode = HttpStatus.ok;
-    response.headers.contentType =
-        ContentType('text', 'event-stream', charset: 'utf-8');
-    response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
     final id = 'chatcmpl-${_id()}';
     final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     var emitted = false;
+    final sse = await _SseStream.open(response, onDisconnect: () {
+      if (inference.generationSource.value == 'server') {
+        unawaited(inference.stopGeneration());
+      }
+    });
 
     void emit(String token) {
       emitted = true;
-      final payload = {
+      sse.event({
         'id': id,
         'object': 'chat.completion.chunk',
         'created': created,
@@ -480,10 +511,10 @@ class OpenAiServerService {
             'finish_reason': null,
           }
         ],
-      };
-      response.write('data: ${jsonEncode(payload)}\n\n');
+      });
     }
 
+    final stopsBefore = inference.stopCount;
     final result = await inference.generate(
       prompt: parsed.prompt,
       systemPrompt: parsed.systemPrompt ??
@@ -492,50 +523,79 @@ class OpenAiServerService {
       source: 'server',
       imagePath: parsed.imagePath,
       audioPath: parsed.audioPath,
+      maxTokens: maxTokens,
       onToken: emit,
     );
-    if (!emitted && result.isNotEmpty) emit(result);
-    response.write('data: [DONE]\n\n');
-    await response.close();
+    await _finishStream(sse, inference, stopsBefore,
+        emitted ? null : result, emit);
+  }
+
+  /// Ends an SSE stream: reports an interruption as an error event rather
+  /// than a normal [DONE], so clients don't mistake a partial answer for a
+  /// complete one.
+  Future<void> _finishStream(
+    _SseStream sse,
+    InferenceService inference,
+    int stopsBefore,
+    String? unemittedResult,
+    void Function(String) emit,
+  ) async {
+    if (inference.stopCount != stopsBefore) {
+      sse.event({
+        'error': {
+          'message': 'Generation was interrupted',
+          'type': 'interrupted',
+        }
+      });
+    } else {
+      if (unemittedResult != null && unemittedResult.isNotEmpty) {
+        emit(unemittedResult);
+      }
+      sse.raw('data: [DONE]\n\n');
+    }
+    await sse.close();
   }
 
   Future<void> _streamCompletionResponse(
     HttpRequest request,
     InferenceService inference,
     String prompt,
+    int? maxTokens,
   ) async {
     final response = request.response;
     _addCorsHeaders(response);
-    response.statusCode = HttpStatus.ok;
-    response.headers.contentType =
-        ContentType('text', 'event-stream', charset: 'utf-8');
-    response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
     final id = 'cmpl-${_id()}';
     final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     var emitted = false;
+    final sse = await _SseStream.open(response, onDisconnect: () {
+      if (inference.generationSource.value == 'server') {
+        unawaited(inference.stopGeneration());
+      }
+    });
 
     void emit(String token) {
       emitted = true;
-      response.write('data: ${jsonEncode({
-            'id': id,
-            'object': 'text_completion',
-            'created': created,
-            'model': inference.loadedModelName.value,
-            'choices': [
-              {'index': 0, 'text': token, 'finish_reason': null}
-            ],
-          })}\n\n');
+      sse.event({
+        'id': id,
+        'object': 'text_completion',
+        'created': created,
+        'model': inference.loadedModelName.value,
+        'choices': [
+          {'index': 0, 'text': token, 'finish_reason': null}
+        ],
+      });
     }
 
+    final stopsBefore = inference.stopCount;
     final result = await inference.generate(
       prompt: prompt,
       systemPrompt: _defaultSystemPrompt(inference.loadedModelName.value),
       source: 'server',
+      maxTokens: maxTokens,
       onToken: emit,
     );
-    if (!emitted && result.isNotEmpty) emit(result);
-    response.write('data: [DONE]\n\n');
-    await response.close();
+    await _finishStream(sse, inference, stopsBefore,
+        emitted ? null : result, emit);
   }
 
   Map<String, dynamic> _chatResponse(String model, String text) {
@@ -628,13 +688,77 @@ class OpenAiServerService {
   }
 }
 
+/// Streams server-sent events over the raw socket.
+///
+/// dart:io's HttpServer never reports a client that hangs up mid-response
+/// (flush() keeps succeeding and `done` never errors), so the response is
+/// detached and the socket itself is watched: it closes the moment the client
+/// goes away. Writes are fire-and-forget, so nothing here can block the
+/// request handler (and leave the server stuck busy).
+class _SseStream {
+  _SseStream._(this._socket, this._onDisconnect) {
+    _socket.listen(
+      (_) {},
+      onDone: _disconnect,
+      onError: (_) => _disconnect(),
+      cancelOnError: true,
+    );
+  }
+
+  static Future<_SseStream> open(
+    HttpResponse response, {
+    required void Function() onDisconnect,
+  }) async {
+    response.statusCode = HttpStatus.ok;
+    response.headers.contentType =
+        ContentType('text', 'event-stream', charset: 'utf-8');
+    response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
+    // The body ends when the connection closes; no chunked framing needed.
+    response.headers.chunkedTransferEncoding = false;
+    response.headers.set(HttpHeaders.connectionHeader, 'close');
+    final socket = await response.detachSocket(writeHeaders: true);
+    return _SseStream._(socket, onDisconnect);
+  }
+
+  final Socket _socket;
+  final void Function() _onDisconnect;
+  bool _disconnected = false;
+  bool _closed = false;
+
+  void event(Object payload) => raw('data: ${jsonEncode(payload)}\n\n');
+
+  void raw(String chunk) {
+    if (_disconnected || _closed) return;
+    try {
+      _socket.write(chunk);
+    } catch (_) {
+      _disconnect();
+    }
+  }
+
+  void _disconnect() {
+    if (_disconnected) return;
+    _disconnected = true;
+    if (!_closed) _onDisconnect();
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _socket.close().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      _socket.destroy();
+    }
+  }
+}
+
 class _ParsedChatRequest {
   final String prompt;
   final String? systemPrompt;
   final List<Map<String, String>> history;
   final String? imagePath;
   final String? audioPath;
-  final List<File> tempFiles;
   final String? error;
 
   _ParsedChatRequest({
@@ -643,7 +767,6 @@ class _ParsedChatRequest {
     required this.history,
     required this.imagePath,
     required this.audioPath,
-    required this.tempFiles,
   }) : error = null;
 
   _ParsedChatRequest.error(this.error)
@@ -651,37 +774,25 @@ class _ParsedChatRequest {
         systemPrompt = null,
         history = const [],
         imagePath = null,
-        audioPath = null,
-        tempFiles = const [];
-
-  Future<void> cleanup() async {
-    for (final file in tempFiles) {
-      try {
-        if (await file.exists()) await file.delete();
-      } catch (_) {}
-    }
-  }
+        audioPath = null;
 }
 
 class _ContentResult {
   final String text;
   final String? imagePath;
   final String? audioPath;
-  final List<File> tempFiles;
   final String? error;
 
   _ContentResult({
     required this.text,
     this.imagePath,
     this.audioPath,
-    this.tempFiles = const [],
   }) : error = null;
 
   _ContentResult.error(this.error)
       : text = '',
         imagePath = null,
-        audioPath = null,
-        tempFiles = const [];
+        audioPath = null;
 }
 
 class _TempFileResult {

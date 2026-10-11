@@ -48,6 +48,7 @@ class InferenceEngine {
     required double temperature,
     String? imagePath,
     String? audioPath,
+    String source = 'chat',
     void Function(String token)? onToken,
   }) async {
     return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';

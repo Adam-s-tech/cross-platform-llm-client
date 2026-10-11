@@ -96,6 +96,7 @@ class ChatController extends GetxController {
   bool _followStreaming = true;
   bool _scrollListenerAttached = false;
   int _generationSerial = 0;
+  bool _batchCancelled = false;
 
   @override
   void onInit() {
@@ -468,18 +469,14 @@ class ChatController extends GetxController {
     lastBatchImagesBase64.clear();
 
     final generatedImagesBase64 = <String>[];
+    _batchCancelled = false;
 
     for (final prompt in promptsToRun) {
+      if (_batchCancelled) break;
       textController.text = prompt;
+      // sendMessage() returns once this prompt's generation has finished.
       await sendMessage();
-      final expectedSerial = _generationSerial;
-      
-      // Wait until the single image generation completes before starting the next
-      while (isLoading.value) {
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-      
-      if (_generationSerial != expectedSerial) break; // User stopped it
+      if (_batchCancelled) break; // User tapped stop
 
       // Capture generated image
       final lastMsg = messages.lastOrNull;
@@ -541,6 +538,11 @@ class ChatController extends GetxController {
     if (currentSessionId.value.isEmpty) {
       createNewChat();
     }
+
+    // Mark busy before the first await (reading an attached image), so a
+    // double tap can't pass the guard above twice and send duplicates.
+    // Done after createNewChat(), which stops any in-flight generation.
+    isLoading.value = true;
 
     // Encode image to base64 if it's not already pre-encoded, so the message
     // saved in history contains the image bytes and is 100% stable.
@@ -671,6 +673,7 @@ class ChatController extends GetxController {
           final pngBytes = await localImage.generateImage(
             prompt: text,
             onProgress: (step, total) {
+              if (generationId != _generationSerial) return;
               print('[ChatController] Progress callback: step=$step, total=$total');
               imageGenStep.value = step;
               imageGenTotal.value = total;
@@ -708,12 +711,17 @@ class ChatController extends GetxController {
               : null;
           print('[ChatController] generateImage returned, bytes=${pngBytes?.length}, duration=${genDurationMs}ms');
 
+          // A stopped job must not post a completed/failed notification.
+          if (generationId != _generationSerial) return;
           if (pngBytes != null) {
             await imageNotifications.complete(durationMs: genDurationMs ?? 0);
             rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
           } else {
             await imageNotifications.failed();
-            rawResponse = '❌ Local image generation failed.';
+            final reason = localImage.lastFailureReason;
+            rawResponse = reason != null
+                ? '⏳ $reason'
+                : '❌ Local image generation failed.';
           }
         } else {
           final inference = Get.find<InferenceService>();
@@ -729,7 +737,8 @@ class ChatController extends GetxController {
             imagePath: imagePath,
             audioPath: fileType == 'audio' ? filePath : null,
             onToken: (token) {
-              // Real-time streaming update
+              // Ignore tokens from a generation the user already stopped.
+              if (generationId != _generationSerial) return;
               streamingResponse.value += token;
               trackThoughtTiming();
               _scrollToBottom();
@@ -746,6 +755,7 @@ class ChatController extends GetxController {
           messages: apiMessages,
           imageBase64: imgBase64, // already encoded before clearImage()
           onToken: (token) {
+            if (generationId != _generationSerial) return;
             streamingResponse.value += token;
             trackThoughtTiming();
             _scrollToBottom();
@@ -856,8 +866,10 @@ class ChatController extends GetxController {
     imageGenEstimatedSecs.value = 0;
     imageGenStartTime.value = null;
     imageGenDecoding.value = false;
+    _batchCancelled = true;
     unawaited(Get.find<InferenceService>().stopGeneration());
     Get.find<LocalImageService>().cancelGeneration();
+    Get.find<CloudService>().cancel();
   }
 
   void _saveAssistantMessage({

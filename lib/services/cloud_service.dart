@@ -74,6 +74,16 @@ class CloudService extends GetxService {
     return _apiKey.isNotEmpty;
   }
 
+  http.Client? _activeStreamClient;
+
+  /// Aborts the streaming response in progress, if any. Closing the client
+  /// drops the connection, so the provider stops generating (and billing).
+  void cancel() {
+    final client = _activeStreamClient;
+    _activeStreamClient = null;
+    client?.close();
+  }
+
   /// Send a message to the cloud API. Returns the response text.
   /// [messages] is a list of {role, content} maps forming the conversation.
   /// [imageBase64] is optional for multimodal requests.
@@ -575,6 +585,7 @@ class CloudService extends GetxService {
     });
 
     final client = http.Client();
+    _activeStreamClient = client;
     try {
       final response = await client.send(request);
       if (response.statusCode != 200) {
@@ -612,6 +623,7 @@ class CloudService extends GetxService {
 
       return buffer.toString();
     } finally {
+      if (identical(_activeStreamClient, client)) _activeStreamClient = null;
       client.close();
     }
   }

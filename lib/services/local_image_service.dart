@@ -344,7 +344,17 @@ class LocalImageService extends GetxService {
     _hive.setSetting(AppConstants.keyImageGenQuantization, type.index);
   }
 
+  // stable-diffusion.cpp can't abort a running job, so a cancelled job keeps
+  // rendering natively. Track it so its progress is ignored and a new request
+  // gets a clear message instead of a generic failure.
+  bool _nativeJobRunning = false;
+  int _jobId = 0;
+
+  /// Why the last [generateImage] call returned null, when known.
+  String? lastFailureReason;
+
   void cancelGeneration() {
+    _jobId++;
     if (isGenerating.value) {
       print('[LocalImageService] Generation cancelled by user');
       isGenerating.value = false;
@@ -352,6 +362,31 @@ class LocalImageService extends GetxService {
   }
 
   Future<Uint8List?> generateImage({
+    required String prompt,
+    void Function(int step, int totalSteps)? onProgress,
+  }) async {
+    lastFailureReason = null;
+    if (_nativeJobRunning) {
+      lastFailureReason = 'The previous image is still finishing in the '
+          'background. Try again in a few seconds.';
+      return null;
+    }
+    final jobId = ++_jobId;
+    _nativeJobRunning = true;
+    try {
+      final bytes = await _generateImage(
+        prompt: prompt,
+        onProgress: (step, total) {
+          if (jobId == _jobId) onProgress?.call(step, total);
+        },
+      );
+      return jobId == _jobId ? bytes : null;
+    } finally {
+      _nativeJobRunning = false;
+    }
+  }
+
+  Future<Uint8List?> _generateImage({
     required String prompt,
     void Function(int step, int totalSteps)? onProgress,
   }) async {

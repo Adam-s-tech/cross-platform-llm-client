@@ -40,6 +40,9 @@ class InferenceEngine {
   String? _liteConversationSystemPrompt;
   double? _liteConversationTemperature;
   bool _liteConversationHasMessages = false;
+  // Which caller (chat/server/task) the native LiteRT conversation belongs to.
+  // A different caller must never continue another's conversation.
+  String? _liteConversationOwner;
 
   Future<LoadResult> loadModel({
     required String modelPath,
@@ -300,6 +303,7 @@ class InferenceEngine {
     required double temperature,
     String? imagePath,
     String? audioPath,
+    String source = 'chat',
     void Function(String token)? onToken,
   }) async {
     if (_isLiteRt) {
@@ -311,6 +315,7 @@ class InferenceEngine {
         temperature: temperature,
         imagePath: imagePath,
         audioPath: audioPath,
+        source: source,
         onToken: onToken,
       );
     }
@@ -326,13 +331,23 @@ class InferenceEngine {
     final completer = Completer<String>();
     final buffer = StringBuffer();
     bool completed = false;
+    final controller = _controller;
 
-    void finish(String result) {
+    // Timeouts and stop must halt the native engine too; cancelling the Dart
+    // subscription alone leaves llama.cpp generating in the background.
+    void finish(String result, {bool stopNative = true}) {
       if (!completed && !_disposed) {
         completed = true;
         _idleTimer?.cancel();
         _subscription?.cancel();
         _onStop = null;
+        if (stopNative) {
+          unawaited(controller
+                  ?.stop()
+                  .timeout(const Duration(seconds: 1))
+                  .catchError((_) {}) ??
+              Future<void>.value());
+        }
         if (!completer.isCompleted) completer.complete(result);
       }
     }
@@ -398,7 +413,7 @@ class InferenceEngine {
       },
       onDone: () {
         print('[Inference] Stream onDone — $tokenCount tokens total');
-        finish(buffer.toString());
+        finish(buffer.toString(), stopNative: false);
       },
       onError: (error) {
         print('[Inference] Stream error: $error');
@@ -433,6 +448,7 @@ class InferenceEngine {
     required double temperature,
     String? imagePath,
     String? audioPath,
+    required String source,
     void Function(String token)? onToken,
   }) async {
     if (_liteEngine == null) throw Exception('No LiteRT-LM model loaded');
@@ -443,6 +459,7 @@ class InferenceEngine {
       conversationHistory: conversationHistory,
       systemPrompt: systemPrompt,
       temperature: temperature,
+      source: source,
     );
 
     final completer = Completer<String>();
@@ -500,6 +517,11 @@ class InferenceEngine {
           tokenCount++;
           buffer.write(text);
           onToken?.call(text);
+          // LiteRT has no native token limit; enforce it here.
+          if (tokenCount >= maxTokens) {
+            finish(buffer.toString());
+            return;
+          }
           _idleTimer?.cancel();
           _idleTimer = Timer(const Duration(seconds: 8), () {
             print(
@@ -555,6 +577,11 @@ class InferenceEngine {
         tokenCount++;
         buffer.write(text);
         onToken?.call(text);
+        // LiteRT has no native token limit; enforce it here.
+        if (tokenCount >= maxTokens) {
+          finish(buffer.toString());
+          return;
+        }
         _idleTimer?.cancel();
         _idleTimer = Timer(const Duration(seconds: 5), () {
           print('[Inference] LiteRT-LM idle timeout - $tokenCount chunks');
@@ -595,10 +622,15 @@ class InferenceEngine {
     required List<Map<String, String>>? conversationHistory,
     required String systemPrompt,
     required double temperature,
+    required String source,
   }) async {
     final hasIncomingHistory = conversationHistory != null &&
         conversationHistory.any((msg) => (msg['content'] ?? '').isNotEmpty);
+    // Server requests are stateless: each one carries its own history, so it
+    // always gets a fresh conversation and never sees chat context.
     final shouldReset = _liteConversation == null ||
+        source == 'server' ||
+        _liteConversationOwner != source ||
         _liteConversationSystemPrompt != systemPrompt ||
         _liteConversationTemperature != temperature ||
         (_liteConversationHasMessages && !hasIncomingHistory);
@@ -624,6 +656,7 @@ class InferenceEngine {
     _liteConversationSystemPrompt = systemPrompt;
     _liteConversationTemperature = temperature;
     _liteConversationHasMessages = hasIncomingHistory;
+    _liteConversationOwner = source;
   }
 
   Future<void> stop() async {
@@ -656,6 +689,7 @@ class InferenceEngine {
       _liteConversationSystemPrompt = null;
       _liteConversationTemperature = null;
       _liteConversationHasMessages = false;
+      _liteConversationOwner = null;
     }
     // llama.cpp (GGUF) is stateless per-generation — no native
     // conversation object to reset.

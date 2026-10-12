@@ -22,6 +22,10 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
 
     companion object {
         private const val TAG = "LlamaFlutterPlugin"
+        /** llama.cpp mtmd's default media marker (mtmd_default_marker()). */
+        private const val MEDIA_MARKER = "<__media__>"
+        /** Error prefix: text model loaded, but its vision file did not. */
+        const val VISION_LOAD_FAILED = "VISION_LOAD_FAILED:"
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -69,8 +73,22 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
 
                 currentModelPath = config.modelPath
                 isModelLoaded.set(true)
+
+                // Vision projector for multimodal models. If it fails the text
+                // model stays loaded; Dart sees VISION_LOAD_FAILED and carries
+                // on text-only instead of reloading.
+                val mmproj = config.mmprojPath
+                val visionError = if (!mmproj.isNullOrBlank()) {
+                    nativeLoadMmproj(mmproj, config.nThreads)
+                } else null
+
                 withContext(Dispatchers.Main) {
-                    callback(Result.success(Unit))
+                    if (visionError != null) {
+                        callback(Result.failure(
+                            RuntimeException("$VISION_LOAD_FAILED $visionError")))
+                    } else {
+                        callback(Result.success(Unit))
+                    }
                 }
             } catch (e: Exception) {
                 scope.launch {
@@ -101,6 +119,7 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             try {
                 nativeGenerate(
                     request.prompt,
+                    null,
                     request.maxTokens,
                     request.temperature,
                     request.topP,
@@ -203,15 +222,29 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
         isStopping.set(false)
         generationJob = scope.launch {
             try {
+                // Only the newest image is sent (earlier ones stay as text).
+                // Its message gets llama.cpp's media marker, which the native
+                // side replaces with the encoded image.
+                val imageIndex = request.messages.indexOfLast { !it.imagePath.isNullOrBlank() }
+                val imagePath = if (imageIndex >= 0) request.messages[imageIndex].imagePath else null
+
                 // Format the chat messages using the template manager
                 val formattedPrompt = ChatTemplateManager.formatMessages(
-                    request.messages.map { msg -> TemplateChatMessage(msg.role, msg.content) },
+                    request.messages.mapIndexed { i, msg ->
+                        val content = if (i == imageIndex) "$MEDIA_MARKER\n${msg.content}" else msg.content
+                        TemplateChatMessage(msg.role, content)
+                    },
                     request.template,
                     currentModelPath
                 )
 
+                if (imagePath != null) {
+                    android.util.Log.i(TAG, "Image turn: message $imageIndex of ${request.messages.size}, " +
+                        "marker in prompt=${formattedPrompt.contains(MEDIA_MARKER)}")
+                }
                 nativeGenerate(
                     formattedPrompt,
+                    imagePath,
                     request.maxTokens.toLong(),
                     request.temperature.toDouble(),
                     request.topP.toDouble(),
@@ -475,6 +508,7 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
 
     private external fun nativeGenerate(
         prompt: String,
+        imagePath: String?,
         maxTokens: Long,
         temperature: Double,
         topP: Double,
@@ -493,6 +527,8 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
         tokenCallback: (String) -> Unit
     )
 
+    /** Returns null on success, otherwise why the vision file didn't load. */
+    private external fun nativeLoadMmproj(path: String, nThreads: Long): String?
     private external fun nativeStop()
     private external fun nativeFreeModel()
     private external fun nativeGetTokensUsed(): Int

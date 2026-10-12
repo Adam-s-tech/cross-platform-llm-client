@@ -60,6 +60,40 @@ if(GGML_VULKAN)
     endif()
     set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "" FORCE)
     include_directories(BEFORE SYSTEM "${spirv_headers_SOURCE_DIR}/include")
+    # Newer ggml-vulkan calls find_package(SPIRV-Headers CONFIG). CMake 3.22
+    # can't redirect find_package to FetchContent, so provide a minimal
+    # config file for the headers fetched above.
+    set(_spirv_cfg_dir "${CMAKE_BINARY_DIR}/spirv-headers-config")
+    file(WRITE "${_spirv_cfg_dir}/SPIRV-HeadersConfig.cmake"
+"if(NOT TARGET SPIRV-Headers::SPIRV-Headers)
+  add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)
+  set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES \"${spirv_headers_SOURCE_DIR}/include\")
+endif()
+")
+    set(SPIRV-Headers_DIR "${_spirv_cfg_dir}" CACHE PATH "" FORCE)
+
+    # vulkan-shaders-gen is a separate host-side CMake build (ExternalProject).
+    # It inherits the Ninja generator but not its path, so hand it a host
+    # toolchain that points at the same ninja binary and the host compilers.
+    # System compilers only: the NDK's clang (also on PATH) targets Android.
+    find_program(_host_cc  NAMES clang gcc cc
+        PATHS /usr/bin /usr/local/bin NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    find_program(_host_cxx NAMES clang++ g++ c++
+        PATHS /usr/bin /usr/local/bin NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    set(_vk_host_tc "${CMAKE_BINARY_DIR}/vk-shaders-gen-host-toolchain.cmake")
+    file(WRITE "${_vk_host_tc}"
+"set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_C_FLAGS -O2)
+set(CMAKE_CXX_FLAGS -O2)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE NEVER)
+set(CMAKE_C_COMPILER \"${_host_cc}\")
+set(CMAKE_CXX_COMPILER \"${_host_cxx}\")
+set(CMAKE_MAKE_PROGRAM \"${CMAKE_MAKE_PROGRAM}\" CACHE FILEPATH \"\")
+")
+    set(GGML_VULKAN_SHADERS_GEN_TOOLCHAIN "${_vk_host_tc}" CACHE FILEPATH "" FORCE)
 
     # Shaders are compiled with the NDK's own glslc.
     if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
@@ -69,8 +103,21 @@ if(GGML_VULKAN)
     else()
         set(_ndk_host linux-x86_64)
     endif()
+    # The NDK's glslc (shaderc 2022.x) is too old for current ggml-vulkan
+    # shaders (cooperative matrix). Use a newer system glslc — e.g.
+    # `brew install shaderc` — and only fall back to the NDK's.
     find_program(Vulkan_GLSLC_EXECUTABLE glslc
-        HINTS "${ANDROID_NDK}/shader-tools/${_ndk_host}" NO_DEFAULT_PATH)
+        PATHS /opt/homebrew/bin /usr/local/bin ENV VULKAN_SDK
+        PATH_SUFFIXES bin
+        NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    if(NOT Vulkan_GLSLC_EXECUTABLE)
+        message(WARNING "No modern glslc found; falling back to the NDK's, "
+                        "which can't compile all Vulkan shaders. "
+                        "Install one with: brew install shaderc")
+        find_program(Vulkan_GLSLC_EXECUTABLE glslc
+            HINTS "${ANDROID_NDK}/shader-tools/${_ndk_host}" NO_DEFAULT_PATH)
+    endif()
+    message(STATUS "glslc: ${Vulkan_GLSLC_EXECUTABLE}")
 endif()
 set(GGML_OPENMP OFF CACHE BOOL "Disable OpenMP to avoid packaging libomp.so" FORCE)
 set(GGML_STATIC OFF CACHE BOOL "Build as shared library")
@@ -81,6 +128,12 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "Disable tests")
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "Disable examples")
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "Disable server")
 
+# Multimodal (vision) support: build llama.cpp's mtmd library standalone,
+# without common/ or the CLI tools. Video needs an ffmpeg binary, which
+# Android doesn't have, so it stays off.
+set(LLAMA_BUILD_MTMD ON CACHE BOOL "Build the mtmd library" FORCE)
+set(MTMD_VIDEO OFF CACHE BOOL "No ffmpeg on Android" FORCE)
+
 # Add llama.cpp
 add_subdirectory(src/main/cpp/llama.cpp)
 
@@ -88,7 +141,7 @@ add_subdirectory(src/main/cpp/llama.cpp)
 # On Android/NDK it must explicitly link libc++ or symbols such as operator new
 # and std::runtime_error stay unresolved during the native build.
 if(ANDROID)
-    foreach(target ggml-base ggml ggml-cpu ggml-vulkan llama
+    foreach(target ggml-base ggml ggml-cpu ggml-vulkan llama mtmd
             ggml-cpu-android_armv8.0_1 ggml-cpu-android_armv8.2_1
             ggml-cpu-android_armv8.2_2 ggml-cpu-android_armv8.6_1
             ggml-cpu-android_armv9.0_1 ggml-cpu-android_armv9.2_1
@@ -105,6 +158,7 @@ add_library(llama_jni SHARED
 )
 
 target_link_libraries(llama_jni
+    mtmd
     llama
     ggml
     c++_shared

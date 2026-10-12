@@ -11,6 +11,8 @@
 #include <dlfcn.h>
 #include "llama.cpp/include/llama.h"
 #include "llama.cpp/ggml/include/ggml-backend.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
 #define LOG_TAG "LlamaJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -25,6 +27,11 @@ static int g_n_past = 0;  // Track the number of tokens already in KV cache
 // turn reuse the cached prefix it shares with the previous prompt + reply
 // instead of re-feeding (and duplicating) the whole conversation.
 static std::vector<llama_token> g_cached_tokens;
+// Vision projector (mmproj) for multimodal GGUF models; null when text-only.
+static mtmd_context* g_mtmd = nullptr;
+// False after a turn that contained an image: those image embeddings aren't
+// representable in g_cached_tokens, so the next turn must not reuse the cache.
+static bool g_cache_reusable = true;
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
@@ -133,16 +140,23 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeInitBa
     return g_gpu_backend_loaded && firstGpuDevice() != nullptr ? JNI_TRUE : JNI_FALSE;
 }
 
+// CONT lines continue the previous message; drop them when it was DEBUG.
+static ggml_log_level g_last_log_level = GGML_LOG_LEVEL_INFO;
+
 static void androidLlamaLog(ggml_log_level level, const char* text, void*) {
     if (!text) return;
+    // Newer llama.cpp logs thousands of DEBUG lines per model load (graph
+    // dumps); forwarding them to logcat slows loading for no benefit.
+    const ggml_log_level effective =
+        level == GGML_LOG_LEVEL_CONT ? g_last_log_level : level;
+    if (level != GGML_LOG_LEVEL_CONT) g_last_log_level = level;
+    if (effective == GGML_LOG_LEVEL_DEBUG) return;
 
-    const int priority = level >= GGML_LOG_LEVEL_ERROR
+    const int priority = effective == GGML_LOG_LEVEL_ERROR
         ? ANDROID_LOG_ERROR
-        : level == GGML_LOG_LEVEL_WARN
+        : effective == GGML_LOG_LEVEL_WARN
             ? ANDROID_LOG_WARN
-            : level == GGML_LOG_LEVEL_DEBUG
-                ? ANDROID_LOG_DEBUG
-                : ANDROID_LOG_INFO;
+            : ANDROID_LOG_INFO;
     __android_log_write(priority, LOG_TAG, text);
 
     std::lock_guard<std::mutex> lock(g_load_log_mutex);
@@ -464,12 +478,63 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     LOGI("Model loaded successfully");
 }
 
+static void freeMtmd() {
+    if (g_mtmd) {
+        mtmd_free(g_mtmd);
+        g_mtmd = nullptr;
+    }
+}
+
+/// Loads the vision projector for the current model. Returns null on
+/// success, or an error message (the text model stays loaded either way).
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMmproj(
+        JNIEnv* env, jobject /* this */, jstring path, jlong n_threads) {
+    freeMtmd();
+    if (!g_model) return env->NewStringUTF("Load the text model first");
+    if (!path) return env->NewStringUTF("Vision file path is missing");
+    const char* mmproj_path = env->GetStringUTFChars(path, nullptr);
+    if (!mmproj_path) return env->NewStringUTF("Could not read the vision file path");
+
+    mtmd_context_params params = mtmd_context_params_default();
+    // Image encoding stays on the CPU: mobile Vulkan drivers have been
+    // unreliable, and the projector is small enough to run there.
+    params.use_gpu = false;
+    params.n_threads = (int)std::max<jlong>(1, n_threads);
+    params.print_timings = false;
+    params.warmup = false;  // skip a dummy encode at load time
+
+    {
+        std::lock_guard<std::mutex> lock(g_load_log_mutex);
+        g_load_error.clear();
+        g_capture_load_error = true;
+    }
+    mtmd_helper_log_set(androidLlamaLog, nullptr);
+    g_mtmd = mtmd_init_from_file(mmproj_path, g_model, params);
+    env->ReleaseStringUTFChars(path, mmproj_path);
+    const std::string detail = consumeLoadError();
+
+    if (!g_mtmd) {
+        const std::string message = detail.empty()
+            ? "The vision file doesn't match this model or couldn't be loaded"
+            : "Vision file failed to load: " + detail;
+        LOGE("%s", message.c_str());
+        return env->NewStringUTF(message.c_str());
+    }
+    if (!mtmd_support_vision(g_mtmd)) {
+        freeMtmd();
+        return env->NewStringUTF("This projector file doesn't support images");
+    }
+    LOGI("Vision projector loaded");
+    return nullptr;
+}
+
 static jobject g_token_callback = nullptr;
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenerate(
     JNIEnv* env, jobject thiz,
-    jstring prompt, jlong max_tokens, 
+    jstring prompt, jstring image_path, jlong max_tokens,
     jdouble temperature, jdouble top_p, jlong top_k, jdouble min_p, jdouble typical_p,
     jdouble repeat_penalty, jdouble frequency_penalty, jdouble presence_penalty, jlong repeat_last_n,
     jlong mirostat, jdouble mirostat_tau, jdouble mirostat_eta,
@@ -491,6 +556,97 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     const char* prompt_str = env->GetStringUTFChars(prompt, nullptr);
     g_stop_flag = false;
 
+    std::string image_file;
+    if (image_path) {
+        const char* p = env->GetStringUTFChars(image_path, nullptr);
+        if (p) {
+            image_file = p;
+            env->ReleaseStringUTFChars(image_path, p);
+        }
+    }
+    const bool with_image = !image_file.empty();
+    if (with_image && !g_mtmd) {
+        env->ReleaseStringUTFChars(prompt, prompt_str);
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        env->ThrowNew(exception, "This model has no vision file loaded, so it can't read images");
+        return;
+    }
+
+    llama_batch batch = llama_batch_init(512, 0, 1);
+
+    if (with_image) {
+        // Image turn: tokenize text + image into chunks and evaluate them from
+        // an empty cache (image embeddings can't be prefix-matched).
+        std::string sanitized = sanitizeUTF8(prompt_str, strlen(prompt_str));
+        env->ReleaseStringUTFChars(prompt, prompt_str);
+        LOGI("Image prompt: %zu chars, marker %s", sanitized.size(),
+             sanitized.find(mtmd_default_marker()) != std::string::npos ? "present" : "MISSING");
+
+        mtmd_helper_bitmap_wrapper wrapped = mtmd_helper_bitmap_init_from_file(
+            g_mtmd, image_file.c_str(), /*placeholder=*/false,
+            mtmd_helper_init_opt_default());
+        // Video is compiled out (MTMD_VIDEO=OFF), but free it if ever set.
+        if (wrapped.video_ctx) mtmd_helper_video_free(wrapped.video_ctx);
+        mtmd_bitmap* bitmap = wrapped.bitmap;
+        if (!bitmap) {
+            llama_batch_free(batch);
+            jclass exception = env->FindClass("java/lang/RuntimeException");
+            env->ThrowNew(exception, "Couldn't read the image file");
+            return;
+        }
+        // Zero-init: newer mtmd added fields (e.g. text_len) that must not
+        // be left uninitialised.
+        mtmd_input_text text{};
+        text.text = sanitized.c_str();
+        text.text_len = sanitized.size();
+        text.add_special = true;
+        text.parse_special = true;
+        mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+        const mtmd_bitmap* bitmaps[] = {bitmap};
+        const int32_t tok_res = mtmd_tokenize(g_mtmd, chunks, &text, bitmaps, 1);
+        mtmd_bitmap_free(bitmap);
+        if (tok_res != 0) {
+            mtmd_input_chunks_free(chunks);
+            llama_batch_free(batch);
+            jclass exception = env->FindClass("java/lang/RuntimeException");
+            env->ThrowNew(exception, tok_res == 1
+                ? "The prompt is missing the image marker"
+                : "Couldn't process the image");
+            return;
+        }
+
+        const int n_ctx_img = llama_n_ctx(g_ctx);
+        const llama_pos n_pos = mtmd_helper_get_n_pos(chunks);
+        if (n_pos + 64 > n_ctx_img) {
+            mtmd_input_chunks_free(chunks);
+            llama_batch_free(batch);
+            jclass exception = env->FindClass("java/lang/RuntimeException");
+            env->ThrowNew(exception,
+                "The image and conversation are too long for the context size. "
+                "Start a new chat or raise the context size.");
+            return;
+        }
+
+        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, -1);
+        g_cached_tokens.clear();
+        llama_pos new_n_past = 0;
+        LOGI("Evaluating image prompt: %d positions", (int)n_pos);
+        const int32_t eval_res = mtmd_helper_eval_chunks(
+            g_mtmd, g_ctx, chunks, 0, 0, 512, true, &new_n_past);
+        mtmd_input_chunks_free(chunks);
+        if (eval_res != 0) {
+            llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, -1);
+            g_n_past = 0;
+            g_cache_reusable = true;
+            llama_batch_free(batch);
+            jclass exception = env->FindClass("java/lang/RuntimeException");
+            env->ThrowNew(exception, "Failed to encode the image");
+            return;
+        }
+        g_n_past = (int)new_n_past;
+        g_cache_reusable = false;
+    } else {
+
     // Never log prompt text: it is the user's conversation.
     const int prompt_len = strlen(prompt_str);
 
@@ -509,6 +665,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         char error_msg[256];
         snprintf(error_msg, sizeof(error_msg), "Failed to tokenize prompt (got %d tokens)", n_prompt_tokens);
         env->ThrowNew(exception, error_msg);
+        llama_batch_free(batch);
         return;
     }
     std::vector<llama_token> tokens(n_prompt_tokens);
@@ -517,6 +674,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         env->ReleaseStringUTFChars(prompt, prompt_str);
         jclass exception = env->FindClass("java/lang/RuntimeException");
         env->ThrowNew(exception, "Failed to tokenize prompt");
+        llama_batch_free(batch);
         return;
     }
     tokens.resize(actual_tokens);
@@ -540,6 +698,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // drop everything after it. At least one token must be decoded so the
     // last position has logits to sample from.
     size_t n_keep = 0;
+    if (!g_cache_reusable) {
+        // Previous turn held an image: start this one from an empty cache.
+        g_cached_tokens.clear();
+        g_cache_reusable = true;
+    }
     while (n_keep < g_cached_tokens.size() && n_keep < tokens.size() &&
            g_cached_tokens[n_keep] == tokens[n_keep]) {
         n_keep++;
@@ -554,8 +717,6 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // Process prompt in batches to handle long inputs
     const int max_batch_size = 512;
     int tokens_processed = (int)n_keep;
-
-    llama_batch batch = llama_batch_init(max_batch_size, 0, 1);
 
     while (tokens_processed < (int)tokens.size()) {
         batch.n_tokens = 0;
@@ -584,6 +745,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // The KV cache now holds exactly the prompt.
     g_n_past = (int)tokens.size();
     g_cached_tokens = tokens;
+    }  // end text-only prompt path
 
     // Create sampler chain with all parameters
     if (g_sampler) {
@@ -599,6 +761,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // Add penalties first (applied to logits before sampling)
     if (repeat_penalty != 1.0f || frequency_penalty != 0.0f || presence_penalty != 0.0f) {
         llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
+            llama_vocab_n_tokens(g_vocab),  // n_vocab
             repeat_last_n,              // penalty_last_n
             repeat_penalty,             // penalty_repeat
             frequency_penalty,          // penalty_freq
@@ -693,7 +856,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         
         // Update position counter after each generated token
         g_n_past++;
-        g_cached_tokens.push_back(new_token_id);
+        if (g_cache_reusable) g_cached_tokens.push_back(new_token_id);
     }
     LOGI("Generation loop finished.");
 
@@ -725,6 +888,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeFreeMo
         llama_sampler_free(g_sampler);
         g_sampler = nullptr;
     }
+    freeMtmd();
+    g_cache_reusable = true;
     if (g_ctx) {
         llama_free(g_ctx);
         g_ctx = nullptr;
@@ -765,6 +930,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeClearC
         llama_memory_seq_rm(mem, 0, 0, -1);
         g_n_past = 0;
         g_cached_tokens.clear();
+        g_cache_reusable = true;
         LOGI("Context cleared, g_n_past reset to 0");
     } else {
         LOGE("Failed to get memory object from context");

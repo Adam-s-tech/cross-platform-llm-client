@@ -1,3 +1,25 @@
+## 0.3.0 (October 12, 2026)
+
+### Added
+- **Vision (multimodal) GGUF models** — llama.cpp's `mtmd` library is now built
+  in. Pass `mmprojPath` to `loadModel()` and set `imagePath` on a chat message
+  to send an image. Tested model families include Qwen2-VL, Gemma 3 and Gemma 4.
+  If the projector fails to load, the text model stays loaded and
+  `loadModel()` returns the reason.
+- **Gemma 4 chat template** (`gemma4`), auto-detected from the filename.
+
+### Updated
+- Vendored llama.cpp updated to release b11157 (September 24, 2026), which adds
+  Gemma 4 vision (`gemma4v`) and newer model support.
+
+### Build
+- Vulkan shaders now need a recent `glslc` (cooperative-matrix support); the
+  NDK's bundled shaderc 2022.x is too old. Install one with
+  `brew install shaderc` (macOS) or the Vulkan SDK. The build prefers it and
+  warns if it falls back to the NDK's.
+- The `vulkan-shaders-gen` host build gets a generated toolchain (system
+  compilers + the Ninja path) instead of patching the vendored ggml CMake.
+
 ## 0.2.3 (April 20, 2026)
 
 ### Fixed

@@ -323,6 +323,45 @@ class Gemma2Template : ChatTemplate {
  * 
  * Reference: Google Gemma 3 documentation
  */
+/**
+ * Gemma 4 (from the model's own Jinja template): a real system turn and
+ * `<|turn>role … <turn|>` blocks. BOS is added by the tokenizer, not here.
+ * Earlier model replies have their `<|channel>…<channel|>` thinking removed.
+ */
+class Gemma4Template : ChatTemplate {
+    override val name = "gemma4"
+
+    private fun stripThinking(text: String): String {
+        val out = StringBuilder()
+        var rest = text
+        while (true) {
+            val start = rest.indexOf("<|channel>")
+            if (start < 0) { out.append(rest); break }
+            out.append(rest, 0, start)
+            val end = rest.indexOf("<channel|>", start)
+            if (end < 0) break
+            rest = rest.substring(end + "<channel|>".length)
+        }
+        return out.toString().trim()
+    }
+
+    override fun format(messages: List<TemplateChatMessage>): String {
+        val builder = StringBuilder()
+        for (message in messages) {
+            when (message.role) {
+                "system" -> builder.append("<|turn>system\n")
+                    .append(message.content.trim()).append("<turn|>\n")
+                "user" -> builder.append("<|turn>user\n")
+                    .append(message.content.trim()).append("<turn|>\n")
+                "assistant" -> builder.append("<|turn>model\n")
+                    .append(stripThinking(message.content)).append("<turn|>\n")
+            }
+        }
+        builder.append("<|turn>model\n")
+        return builder.toString()
+    }
+}
+
 class Gemma3Template : ChatTemplate {
     override val name = "gemma3"
     
@@ -619,7 +658,9 @@ object ChatTemplateManager {
         "gemma2" to Gemma2Template(),
         "gemma-2" to Gemma2Template(),
         "gemma3" to Gemma3Template(),
-        "gemma-3" to Gemma3Template()
+        "gemma-3" to Gemma3Template(),
+        "gemma4" to Gemma4Template(),
+        "gemma-4" to Gemma4Template()
     )
     
     // Custom templates (mutable) - registered dynamically at runtime
@@ -753,9 +794,12 @@ object ChatTemplateManager {
             lowerPath.contains("phi") -> builtInTemplates["phi"]!!
             
             // Gemma family - detect version carefully
+            lowerPath.contains("gemma-4") || lowerPath.contains("gemma4") || lowerPath.contains("gemma_4") -> {
+                android.util.Log.i("ChatTemplateManager", "Detected Gemma 4 model - using gemma4 template")
+                builtInTemplates["gemma4"]!!
+            }
             lowerPath.contains("gemma-3") || lowerPath.contains("gemma3") || lowerPath.contains("gemma_3") -> {
                 android.util.Log.i("ChatTemplateManager", "Detected Gemma 3 model - using gemma3 template")
-                android.util.Log.w("ChatTemplateManager", "Note: Full multimodal Gemma 3 requires Transformers. GGUF is text-only.")
                 builtInTemplates["gemma3"]!!
             }
             lowerPath.contains("gemma-2") || lowerPath.contains("gemma2") || lowerPath.contains("gemma_2") -> {

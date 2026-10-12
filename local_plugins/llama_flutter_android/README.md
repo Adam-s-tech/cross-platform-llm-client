@@ -16,7 +16,8 @@ Run GGUF models on Android with [llama.cpp](https://github.com/ggerganov/llama.c
 - **Auto-Detection** - Chat templates detected from model filename
 - **Vulkan GPU Acceleration** - Real GPU inference via `GGML_VULKAN` on supported devices
 - **GPU Detection API** - `detectGpu()` returns device name, Vulkan support, memory info, and a recommended layer count
-- **Latest llama.cpp** - Built on March 4, 2026 llama.cpp release (b8201)
+- **Latest llama.cpp** - Built on the September 24, 2026 llama.cpp release (b11157)
+- **Vision models** - GGUF multimodal models via llama.cpp `mtmd` (`mmprojPath` + `imagePath`)
 - **ARM64 Optimized** - NEON and dot product optimizations enabled
 
 ## Requirements
@@ -25,6 +26,7 @@ Run GGUF models on Android with [llama.cpp](https://github.com/ggerganov/llama.c
 - Dart SDK 3.3.0+
 - Android API 26+ (Android 8.0)
 - NDK r27+ (for 16KB page size support)
+- A recent `glslc` for the Vulkan GPU backend — `brew install shaderc` on macOS, or the Vulkan SDK (the NDK's shaderc is too old for current ggml shaders)
 
 ## Installation
 

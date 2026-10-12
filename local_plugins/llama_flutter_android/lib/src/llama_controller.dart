@@ -18,12 +18,16 @@ class LlamaController implements LlamaFlutterApi {
     );
   }
 
-  /// Load a GGUF model
-  Future<void> loadModel({
+  /// Load a GGUF model, plus its vision projector when [mmprojPath] is set.
+  ///
+  /// Returns null on success. If the text model loaded but the vision file
+  /// didn't, the model stays usable as text-only and the reason is returned.
+  Future<String?> loadModel({
     required String modelPath,
     int threads = 4,
     int contextSize = 2048,
     int? gpuLayers,
+    String? mmprojPath,
   }) async {
     if (_isLoading) throw StateError('Already loading');
     final loaded = await _safeIsModelLoaded();
@@ -36,7 +40,15 @@ class LlamaController implements LlamaFlutterApi {
         nThreads: threads,
         contextSize: contextSize,
         nGpuLayers: gpuLayers,
+        mmprojPath: mmprojPath,
       ));
+      return null;
+    } on PlatformException catch (e) {
+      const marker = 'VISION_LOAD_FAILED:';
+      final text = '${e.message ?? ''} ${e.details ?? ''}';
+      final at = text.indexOf(marker);
+      if (at < 0) rethrow;
+      return text.substring(at + marker.length).trim();
     } finally {
       _isLoading = false;
     }

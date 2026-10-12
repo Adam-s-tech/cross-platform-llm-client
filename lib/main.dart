@@ -18,6 +18,7 @@ import 'services/hive_service.dart';
 import 'services/inference_service.dart';
 import 'services/cloud_service.dart';
 import 'services/download_service.dart';
+import 'services/update_service.dart';
 import 'services/device_info_service.dart';
 import 'services/local_image_service.dart';
 import 'services/app_log_service.dart';
@@ -87,6 +88,7 @@ void main() {
     Get.put(InferenceService());
     Get.put(CloudService());
     Get.put(DownloadService());
+    if (UpdateService.isSupported) Get.put(UpdateService(), permanent: true);
     Get.put(LocalImageService());
     final crashReporting = await Get.putAsync(() => CrashReportingService().init().timeout(
           const Duration(seconds: 10),

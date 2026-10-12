@@ -54,6 +54,13 @@ class AppConstants {
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';
   static const String keyHapticsEnabled = 'haptics_enabled';
+  static const String keyAutoUpdateCheck = 'auto_update_check';
+  static const String keyLastUpdateCheck = 'last_update_check';
+  static const String keyLastUpdatePrompt = 'last_update_prompt';
+  static const String keySkippedUpdateVersion = 'skipped_update_version';
+
+  /// GitHub repository whose releases ship the Android APKs.
+  static const String githubRepo = 'orailnoor/cross-platform-llm-client';
   static const String keyServerApiKey = 'server_api_key';
   static const String keyServerUseApiKey = 'server_use_api_key';
   static const String keyServerAllowNetwork = 'server_allow_network';

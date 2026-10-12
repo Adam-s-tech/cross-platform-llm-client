@@ -7,6 +7,7 @@ import '../widgets/home_empty_state.dart' show providerLabel;
 import '../services/inference_service.dart';
 import '../services/hive_service.dart';
 import '../services/local_image_service.dart';
+import '../services/update_service.dart';
 import '../services/device_info_service.dart';
 import '../services/device_info_native.dart' as platform_info;
 import '../ffi/sd_ffi_bindings.dart';
@@ -201,6 +202,11 @@ class SettingsView extends GetView<SettingsController> {
                   child: _buildDeviceCard(context),
                 );
               }),
+              if (UpdateService.isSupported &&
+                  Get.isRegistered<UpdateService>()) ...[
+                _gap,
+                _buildUpdatesCard(context),
+              ],
               const SizedBox(height: 24),
               AppGroup(dividerIndent: 60, children: [
                 AppRow(
@@ -229,6 +235,80 @@ class SettingsView extends GetView<SettingsController> {
   }
 
   static const _gap = SizedBox(height: 10);
+
+  Widget _buildUpdatesCard(BuildContext context) {
+    final updates = Get.find<UpdateService>();
+    return Obx(() {
+      final update = updates.availableUpdate.value;
+      final checking = updates.state.value == UpdateState.checking;
+      final downloading = updates.state.value == UpdateState.downloading;
+      final checked = updates.lastCheck.value;
+      final String status;
+      if (update != null) {
+        status = downloading
+            ? 'Downloading ${update.version} · ${(updates.progress.value * 100).round()}%'
+            : 'Version ${update.version} available';
+      } else if (checked != null) {
+        status = 'Up to date · checked ${_ago(checked)}';
+      } else {
+        status = 'Not checked yet';
+      }
+      return CollapsibleCard(
+        icon: Icons.system_update_rounded,
+        title: 'App updates',
+        summary: status,
+        child: AppGroup(flat: true, children: [
+          AppRow(
+            icon: update != null
+                ? Icons.download_rounded
+                : Icons.refresh_rounded,
+            title: update != null ? 'Update to ${update.version}' : 'Check for updates',
+            subtitle: update != null
+                ? 'You have ${updates.currentVersion.value} · see what\'s new'
+                : status,
+            trailing: checking
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : null,
+            chevron: !checking,
+            onTap: checking
+                ? null
+                : () async {
+                    if (update != null) {
+                      updates.showUpdateSheet(context);
+                      return;
+                    }
+                    final found =
+                        await updates.checkForUpdate(manual: true);
+                    if (found != null && context.mounted) {
+                      updates.showUpdateSheet(context);
+                    }
+                  },
+          ),
+          AppRow(
+            icon: Icons.schedule_rounded,
+            title: 'Check automatically',
+            subtitle: 'Look for a new release once a day',
+            trailing: Switch(
+              value: updates.autoCheck.value,
+              onChanged: updates.setAutoCheck,
+            ),
+            onTap: () => updates.setAutoCheck(!updates.autoCheck.value),
+          ),
+        ]),
+      );
+    });
+  }
+
+  static String _ago(DateTime time) {
+    final d = DateTime.now().difference(time);
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inHours < 1) return '${d.inMinutes}m ago';
+    if (d.inDays < 1) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
+  }
 
   /// Section bodies are built as standalone groups; inside a collapsible
   /// card they drop their own surface so there's no double border.

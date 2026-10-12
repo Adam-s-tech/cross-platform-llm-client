@@ -7,6 +7,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import android.util.Log
 import android.os.Handler
 import android.os.Looper
@@ -144,6 +147,39 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 }
+                "downloadUpdate" -> {
+                    val url = call.argument<String>("url")
+                    val filename = call.argument<String>("filename")
+                    if (url.isNullOrBlank() || filename.isNullOrBlank()) {
+                        result.error("BAD_ARGS", "url and filename are required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        result.success(enqueueUpdateDownload(url, filename))
+                    } catch (e: Exception) {
+                        result.error("DOWNLOAD_FAILED", e.message ?: e.toString(), null)
+                    }
+                }
+                "cancelUpdateDownload" -> {
+                    val id = (call.argument<Any>("downloadId") as? Number)?.toLong()
+                    if (id != null) {
+                        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                        manager.remove(id)
+                    }
+                    result.success(null)
+                }
+                "installApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank() || !File(path).exists()) {
+                        result.error("BAD_ARGS", "APK not found", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        result.success(installApk(File(path)))
+                    } catch (e: Exception) {
+                        result.error("INSTALL_FAILED", e.message ?: e.toString(), null)
+                    }
+                }
                 "restartApp" -> {
                     restartApp()
                     result.success(null)
@@ -152,6 +188,97 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+    }
+
+    private fun updatesDir(): File =
+        File(getExternalFilesDir(null), "updates").apply { mkdirs() }
+
+    /** Downloads a release APK into the app's updates folder, reporting
+     *  progress as "update:<filename>". */
+    private fun enqueueUpdateDownload(url: String, filename: String): Long {
+        val safeName = sanitizeFilename(filename)
+        val destFile = File(updatesDir(), safeName)
+        if (destFile.exists()) destFile.delete()
+        val key = "update:$safeName"
+
+        val request = DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle("PrivateLM update")
+            setDescription(safeName)
+            setMimeType("application/vnd.android.package-archive")
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+            setAllowedOverMetered(true)
+            setAllowedOverRoaming(true)
+            setDestinationUri(Uri.fromFile(destFile))
+        }
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val downloadId = manager.enqueue(request)
+
+        thread(name = "update-monitor-$downloadId") {
+            var lastBytes = 0L
+            var lastTime = System.currentTimeMillis()
+            while (true) {
+                Thread.sleep(500)
+                val cursor = manager.query(DownloadManager.Query().setFilterById(downloadId))
+                if (cursor == null) {
+                    emitProgress(key, 0, 0, 0.0, "Update cancelled")
+                    break
+                }
+                val done = cursor.use {
+                    if (!it.moveToFirst()) {
+                        emitProgress(key, 0, 0, 0.0, "Update cancelled")
+                        return@use true
+                    }
+                    val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    val downloaded = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                    val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                    when (status) {
+                        DownloadManager.STATUS_SUCCESSFUL -> {
+                            emitProgress(key, total, total, 0.0, "Update downloaded")
+                            true
+                        }
+                        DownloadManager.STATUS_FAILED -> {
+                            val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                            destFile.delete()
+                            emitProgress(key, downloaded, total, 0.0, "Update failed: $reason")
+                            true
+                        }
+                        else -> {
+                            val now = System.currentTimeMillis()
+                            val secs = (now - lastTime) / 1000.0
+                            val speed = if (secs > 0 && downloaded > lastBytes) (downloaded - lastBytes) / secs else 0.0
+                            lastBytes = downloaded
+                            lastTime = now
+                            emitProgress(key, downloaded, total, speed, "Downloading update...")
+                            false
+                        }
+                    }
+                }
+                if (done) break
+            }
+        }
+        return downloadId
+    }
+
+    /** Hands an APK to the system installer. Returns "needs_permission" when
+     *  the user still has to allow installs from this app. */
+    private fun installApk(file: File): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+            return "needs_permission"
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+        return "started"
     }
 
     private fun restartApp() {

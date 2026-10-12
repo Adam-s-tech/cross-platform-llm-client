@@ -25,281 +25,330 @@ class SettingsView extends GetView<SettingsController> {
     return Scaffold(
       backgroundColor: t.bg,
       appBar: appScreenBar(context, title: 'Settings'),
-      body: Obx(() => ListView(
-            padding: kPagePadding,
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            children: [
-              CollapsibleCard(
+      body: Obx(() {
+        final device = Get.find<DeviceInfoService>();
+        final showUpdates =
+            UpdateService.isSupported && Get.isRegistered<UpdateService>();
+        return ListView(
+          padding: kPagePadding,
+          children: [
+            const SectionHeader('General',
+                padding: EdgeInsets.fromLTRB(4, 8, 4, 8)),
+            AppGroup(dividerIndent: 60, children: [
+              _navRow(
+                context,
                 icon: Icons.palette_outlined,
                 title: 'Appearance',
-                summary: _appearanceSummary(),
-                child: AppGroup(flat: true, children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Theme', style: t.body),
-                          const SizedBox(height: 10),
-                          AppSegmented<ThemeMode>(
-                            items: const [
-                              (ThemeMode.light, 'Light'),
-                              (ThemeMode.dark, 'Dark'),
-                              (ThemeMode.system, 'System'),
-                            ],
-                            selected: controller.themeMode.value,
-                            onChanged: (mode) {
-                              if (mode != controller.themeMode.value) {
-                                controller.setThemeMode(mode);
-                              }
-                            },
-                          ),
-                        ]),
-                  ),
-                  Obx(() => _buildFontSizeRow(context)),
-                  AppRow(
-                    icon: Icons.vibration_rounded,
-                    title: 'Haptic feedback',
-                    subtitle: 'Light vibration on taps and selections',
-                    trailing: Switch(
-                      value: controller.hapticsEnabled.value,
-                      onChanged: controller.setHapticsEnabled,
-                    ),
-                    onTap: () => controller
-                        .setHapticsEnabled(!controller.hapticsEnabled.value),
-                  ),
-                ]),
+                value: _themeLabel(),
+                builder: (ctx) => _buildAppearanceGroup(ctx),
               ),
-              _gap,
-              CollapsibleCard(
+              AppRow(
+                icon: Icons.vibration_rounded,
+                title: 'Haptic feedback',
+                trailing: Switch(
+                  value: controller.hapticsEnabled.value,
+                  onChanged: controller.setHapticsEnabled,
+                ),
+                onTap: () => controller
+                    .setHapticsEnabled(!controller.hapticsEnabled.value),
+              ),
+            ]),
+            const SectionHeader('Chat'),
+            AppGroup(dividerIndent: 60, children: [
+              _navRow(
+                context,
                 icon: Icons.memory_rounded,
                 title: 'Inference mode',
-                summary: controller.inferenceMode.value == 'local'
-                    ? 'Local · ${_localSubtitle()}'
-                    : 'Cloud · ${providerLabel(controller)}',
-                child: AppGroup(flat: true, dividerIndent: 60, children: [
-                  AppRow(
-                    icon: Icons.phone_iphone_rounded,
-                    title: 'Local (on-device)',
-                    subtitle: _localSubtitle(),
-                    selected: controller.inferenceMode.value == 'local',
-                    onTap: () => controller.setInferenceMode('local'),
-                  ),
-                  AppRow(
-                    icon: Icons.cloud_outlined,
-                    title: 'Cloud API',
-                    subtitle: providerLabel(controller),
-                    selected: controller.inferenceMode.value == 'cloud',
-                    onTap: () => controller.setInferenceMode('cloud'),
-                  ),
-                ]),
+                value: controller.inferenceMode.value == 'local'
+                    ? 'Local'
+                    : 'Cloud',
+                builder: (ctx) => _buildInferenceGroup(ctx),
               ),
-              _gap,
-              CollapsibleCard(
+              _navRow(
+                context,
                 icon: Icons.chat_bubble_outline_rounded,
                 title: 'System prompt',
-                summary: _firstLine(controller.globalSystemPrompt.value,
-                    fallback: 'Default'),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                  child: Column(children: [
-                    TextField(
-                      controller: controller.globalSystemPromptController,
-                      minLines: 3,
-                      maxLines: 6,
-                      style: t.body,
-                      decoration: appInputDecoration(context,
-                          hint: AppConstants.systemPrompt),
-                      onSubmitted: (v) => controller.setGlobalSystemPrompt(v),
-                    ),
-                    _fieldFooter(
-                      context,
-                      note: 'Applies to local and cloud models.',
-                      onSave: () async {
-                        await controller.setGlobalSystemPrompt(
-                            controller.globalSystemPromptController.text);
-                        if (context.mounted) {
-                          _confirmSaved(context, 'System prompt saved');
-                        }
-                      },
-                    ),
-                  ]),
-                ),
+                value: controller.globalSystemPrompt.value.trim().isEmpty
+                    ? 'Default'
+                    : 'Custom',
+                builder: (ctx) => _buildSystemPromptGroup(ctx),
+                reactive: false,
               ),
-              _gap,
-              CollapsibleCard(
-                icon: Icons.block_rounded,
-                title: 'Stop sequences',
-                summary: controller.stopSequences.isEmpty
-                    ? 'None'
-                    : '${controller.stopSequences.length} '
-                        '${controller.stopSequences.length == 1 ? 'sequence' : 'sequences'}',
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                  child: Column(children: [
-                    TextField(
-                      controller: controller.stopSequencesController,
-                      minLines: 2,
-                      maxLines: 5,
-                      style: t.mono.copyWith(fontSize: 13.5),
-                      decoration:
-                          appInputDecoration(context, hint: '###\n\\nUser:'),
-                    ),
-                    _fieldFooter(
-                      context,
-                      note: 'Local models stop when they write one of these. '
-                          'One per line; use \\n for a newline.',
-                      onSave: () async {
-                        await controller.setStopSequences(
-                            controller.stopSequencesController.text);
-                        if (context.mounted) {
-                          _confirmSaved(context, 'Stop sequences saved');
-                        }
-                      },
-                    ),
-                  ]),
-                ),
-              ),
-              _gap,
-              CollapsibleCard(
+              _navRow(
+                context,
                 icon: Icons.tune_rounded,
                 title: 'Model parameters',
-                summary:
-                    'Temperature ${controller.temperature.value.toStringAsFixed(2)}'
-                    ' · ${controller.maxTokens.value} tokens'
-                    ' · ${controller.contextSize.value} context',
-                child: _flatten(_buildModelParametersGroup(context)),
+                value: controller.temperature.value.toStringAsFixed(2),
+                builder: (ctx) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildModelParametersGroup(ctx),
+                      const SectionHeader('Stop sequences'),
+                      _buildStopSequencesGroup(ctx),
+                    ]),
               ),
-              _gap,
-              CollapsibleCard(
+            ]),
+            const SectionHeader('Performance'),
+            AppGroup(dividerIndent: 60, children: [
+              _navRow(
+                context,
                 icon: Icons.speed_rounded,
-                title: 'Performance',
-                summary: switch (controller.liteRtPerformanceMode.value) {
-                  'gpu_fast' => 'GPU fast · GGUF & LiteRT',
-                  'cpu_safe' => 'CPU safe · GGUF & LiteRT',
-                  _ => 'Auto fast · GGUF & LiteRT',
+                title: 'GGUF & LiteRT',
+                value: switch (controller.liteRtPerformanceMode.value) {
+                  'gpu_fast' => 'GPU fast',
+                  'cpu_safe' => 'CPU safe',
+                  _ => 'Auto fast',
                 },
-                child: _flatten(_buildLiteRtGroup(context)),
+                builder: (ctx) => _buildLiteRtGroup(ctx),
               ),
-              _gap,
-              CollapsibleCard(
+              _navRow(
+                context,
                 icon: Icons.image_outlined,
                 title: 'Image generation',
-                summary: '${controller.imageSteps.value} steps'
-                    ' · ${controller.imageGenSize.value == 0 ? 'Auto size' : '${controller.imageGenSize.value}px'}'
-                    ' · ${controller.imageGenBackend.value == Backend.cpu ? 'CPU' : 'GPU'}',
-                child: _flatten(_buildImageGenerationGroup(context)),
+                value: controller.imageGenBackend.value == Backend.cpu
+                    ? 'CPU'
+                    : 'GPU',
+                builder: (ctx) => _buildImageGenerationGroup(ctx),
               ),
-              _gap,
-              Obx(() {
-                final device = Get.find<DeviceInfoService>();
-                return CollapsibleCard(
-                  icon: Icons.smartphone_rounded,
-                  title: 'Device',
-                  summary:
-                      '${device.totalRamGB.value.toStringAsFixed(1)} GB RAM'
-                      ' · ${device.availableRamGB.value.toStringAsFixed(1)} GB free',
-                  child: _buildDeviceCard(context),
-                );
-              }),
-              if (UpdateService.isSupported &&
-                  Get.isRegistered<UpdateService>()) ...[
-                _gap,
-                _buildUpdatesCard(context),
-              ],
-              const SizedBox(height: 24),
-              AppGroup(dividerIndent: 60, children: [
-                AppRow(
-                  icon: Icons.article_outlined,
-                  title: 'Logs',
-                  subtitle: 'Errors, warnings and debug details',
-                  chevron: true,
-                  onTap: () => Get.to(() => const LogView()),
+            ]),
+            const SectionHeader('About'),
+            AppGroup(dividerIndent: 60, children: [
+              if (showUpdates) _buildUpdatesRow(context),
+              _navRow(
+                context,
+                icon: Icons.smartphone_rounded,
+                title: 'Device',
+                value: '${device.totalRamGB.value.toStringAsFixed(1)} GB RAM',
+                builder: (ctx) => AppGroup(children: [_buildDeviceCard(ctx)]),
+                reactive: false,
+              ),
+              AppRow(
+                icon: Icons.article_outlined,
+                title: 'Logs',
+                chevron: true,
+                onTap: () => Get.to(() => const LogView()),
+              ),
+              AppRow(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset('assets/icons/appicon.png',
+                      width: 32, height: 32),
                 ),
-                AppRow(
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.asset('assets/icons/appicon.png',
-                        width: 32, height: 32),
-                  ),
-                  title: 'PrivateLM',
-                  subtitle: controller.appVersion.value.isEmpty
-                      ? 'Version unavailable · by orailnoor & techjarves'
-                      : 'Version ${controller.appVersion.value} · by orailnoor & techjarves',
-                ),
-              ]),
-              const SizedBox(height: 16),
-            ],
-          )),
+                title: 'PrivateLM',
+                subtitle: controller.appVersion.value.isEmpty
+                    ? 'by orailnoor & techjarves'
+                    : 'Version ${controller.appVersion.value} · by orailnoor & techjarves',
+              ),
+            ]),
+          ],
+        );
+      }),
     );
   }
 
-  static const _gap = SizedBox(height: 10);
+  /// Row on the main page: icon, title, current value and a chevron that
+  /// opens the section on its own page.
+  Widget _navRow(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String value,
+    required WidgetBuilder builder,
+    bool reactive = true,
+  }) {
+    final t = AppTokens.of(context);
+    return AppRow(
+      icon: icon,
+      title: title,
+      trailing: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 140),
+        child: Text(value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: t.caption.copyWith(fontSize: 14)),
+      ),
+      chevron: true,
+      onTap: () => Get.to(() =>
+          _SettingsPage(title: title, builder: builder, reactive: reactive)),
+    );
+  }
 
-  Widget _buildUpdatesCard(BuildContext context) {
-    final updates = Get.find<UpdateService>();
-    return Obx(() {
-      final update = updates.availableUpdate.value;
-      final checking = updates.state.value == UpdateState.checking;
-      final downloading = updates.state.value == UpdateState.downloading;
-      final checked = updates.lastCheck.value;
-      final String status;
-      if (update != null) {
-        status = downloading
-            ? 'Downloading ${update.version} · ${(updates.progress.value * 100).round()}%'
-            : 'Version ${update.version} available';
-      } else if (checked != null) {
-        status = 'Up to date · checked ${_ago(checked)}';
-      } else {
-        status = 'Not checked yet';
-      }
-      return CollapsibleCard(
-        icon: Icons.system_update_rounded,
-        title: 'App updates',
-        summary: status,
-        child: AppGroup(flat: true, children: [
-          AppRow(
-            icon: update != null
-                ? Icons.download_rounded
-                : Icons.refresh_rounded,
-            title: update != null ? 'Update to ${update.version}' : 'Check for updates',
-            subtitle: update != null
-                ? 'You have ${updates.currentVersion.value} · see what\'s new'
-                : status,
-            trailing: checking
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : null,
-            chevron: !checking,
-            onTap: checking
-                ? null
-                : () async {
-                    if (update != null) {
-                      updates.showUpdateSheet(context);
-                      return;
-                    }
-                    final found =
-                        await updates.checkForUpdate(manual: true);
-                    if (found != null && context.mounted) {
-                      updates.showUpdateSheet(context);
-                    }
-                  },
-          ),
-          AppRow(
-            icon: Icons.schedule_rounded,
-            title: 'Check automatically',
-            subtitle: 'Look for a new release once a day',
-            trailing: Switch(
-              value: updates.autoCheck.value,
-              onChanged: updates.setAutoCheck,
-            ),
-            onTap: () => updates.setAutoCheck(!updates.autoCheck.value),
+  String _themeLabel() => switch (controller.themeMode.value) {
+        ThemeMode.light => 'Light',
+        ThemeMode.dark => 'Dark',
+        ThemeMode.system => 'System',
+      };
+
+  Widget _buildAppearanceGroup(BuildContext context) {
+    final t = AppTokens.of(context);
+    return AppGroup(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Theme', style: t.body),
+          const SizedBox(height: 10),
+          AppSegmented<ThemeMode>(
+            items: const [
+              (ThemeMode.light, 'Light'),
+              (ThemeMode.dark, 'Dark'),
+              (ThemeMode.system, 'System'),
+            ],
+            selected: controller.themeMode.value,
+            onChanged: (mode) {
+              if (mode != controller.themeMode.value) {
+                controller.setThemeMode(mode);
+              }
+            },
           ),
         ]),
-      );
-    });
+      ),
+      _buildFontSizeRow(context),
+    ]);
+  }
+
+  Widget _buildInferenceGroup(BuildContext context) {
+    return AppGroup(dividerIndent: 60, children: [
+      AppRow(
+        icon: Icons.phone_iphone_rounded,
+        title: 'Local (on-device)',
+        subtitle: _localSubtitle(),
+        selected: controller.inferenceMode.value == 'local',
+        onTap: () => controller.setInferenceMode('local'),
+      ),
+      AppRow(
+        icon: Icons.cloud_outlined,
+        title: 'Cloud API',
+        subtitle: providerLabel(controller),
+        selected: controller.inferenceMode.value == 'cloud',
+        onTap: () => controller.setInferenceMode('cloud'),
+      ),
+    ]);
+  }
+
+  Widget _buildSystemPromptGroup(BuildContext context) {
+    final t = AppTokens.of(context);
+    return Column(children: [
+      TextField(
+        controller: controller.globalSystemPromptController,
+        minLines: 5,
+        maxLines: 12,
+        style: t.body,
+        decoration:
+            appInputDecoration(context, hint: AppConstants.systemPrompt),
+        onSubmitted: (v) => controller.setGlobalSystemPrompt(v),
+      ),
+      _fieldFooter(
+        context,
+        note: 'Applies to local and cloud models.',
+        onSave: () async {
+          await controller.setGlobalSystemPrompt(
+              controller.globalSystemPromptController.text);
+          if (context.mounted) {
+            _confirmSaved(context, 'System prompt saved');
+          }
+        },
+      ),
+    ]);
+  }
+
+  Widget _buildStopSequencesGroup(BuildContext context) {
+    final t = AppTokens.of(context);
+    return Column(children: [
+      TextField(
+        controller: controller.stopSequencesController,
+        minLines: 2,
+        maxLines: 5,
+        style: t.mono.copyWith(fontSize: 13.5),
+        decoration: appInputDecoration(context, hint: '###\n\\nUser:'),
+      ),
+      _fieldFooter(
+        context,
+        note: 'Local models stop when they write one of these. '
+            'One per line; use \\n for a newline.',
+        onSave: () async {
+          await controller
+              .setStopSequences(controller.stopSequencesController.text);
+          if (context.mounted) {
+            _confirmSaved(context, 'Stop sequences saved');
+          }
+        },
+      ),
+    ]);
+  }
+
+  Widget _buildUpdatesRow(BuildContext context) {
+    final updates = Get.find<UpdateService>();
+    final t = AppTokens.of(context);
+    final update = updates.availableUpdate.value;
+    final downloading = updates.state.value == UpdateState.downloading;
+    return AppRow(
+      icon: Icons.system_update_rounded,
+      title: 'App updates',
+      trailing: update != null
+          ? AppTag(
+              downloading
+                  ? '${(updates.progress.value * 100).round()}%'
+                  : '${update.version} available',
+              color: t.accent)
+          : Text('Up to date', style: t.caption.copyWith(fontSize: 14)),
+      chevron: true,
+      onTap: () => Get.to(() => _SettingsPage(
+          title: 'App updates', builder: (ctx) => _buildUpdatesGroup(ctx))),
+    );
+  }
+
+  Widget _buildUpdatesGroup(BuildContext context) {
+    final updates = Get.find<UpdateService>();
+    final update = updates.availableUpdate.value;
+    final checking = updates.state.value == UpdateState.checking;
+    final checked = updates.lastCheck.value;
+    final current = updates.currentVersion.value;
+    final String status;
+    if (update != null) {
+      status = 'You have $current · see what\'s new';
+    } else if (checked != null) {
+      status = 'Up to date · checked ${_ago(checked)}';
+    } else {
+      status = 'Not checked yet';
+    }
+    return AppGroup(dividerIndent: 60, children: [
+      AppRow(
+        icon: update != null ? Icons.download_rounded : Icons.refresh_rounded,
+        title: update != null
+            ? 'Update to ${update.version}'
+            : 'Check for updates',
+        subtitle: status,
+        trailing: checking
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : null,
+        chevron: !checking,
+        onTap: checking
+            ? null
+            : () async {
+                if (update != null) {
+                  updates.showUpdateSheet(context);
+                  return;
+                }
+                final found = await updates.checkForUpdate(manual: true);
+                if (found != null && context.mounted) {
+                  updates.showUpdateSheet(context);
+                }
+              },
+      ),
+      AppRow(
+        icon: Icons.schedule_rounded,
+        title: 'Check automatically',
+        subtitle: 'Look for a new release once a day',
+        trailing: Switch(
+          value: updates.autoCheck.value,
+          onChanged: updates.setAutoCheck,
+        ),
+        onTap: () => updates.setAutoCheck(!updates.autoCheck.value),
+      ),
+    ]);
   }
 
   static String _ago(DateTime time) {
@@ -308,28 +357,6 @@ class SettingsView extends GetView<SettingsController> {
     if (d.inHours < 1) return '${d.inMinutes}m ago';
     if (d.inDays < 1) return '${d.inHours}h ago';
     return '${d.inDays}d ago';
-  }
-
-  /// Section bodies are built as standalone groups; inside a collapsible
-  /// card they drop their own surface so there's no double border.
-  Widget _flatten(Widget w) => w is AppGroup
-      ? AppGroup(
-          flat: true, dividerIndent: w.dividerIndent, children: w.children)
-      : w;
-
-  String _appearanceSummary() {
-    final theme = switch (controller.themeMode.value) {
-      ThemeMode.light => 'Light',
-      ThemeMode.dark => 'Dark',
-      ThemeMode.system => 'System',
-    };
-    return '$theme theme · ${(controller.fontScale.value * 100).round()}% text'
-        '${controller.hapticsEnabled.value ? '' : ' · Haptics off'}';
-  }
-
-  String _firstLine(String s, {required String fallback}) {
-    final line = s.trim().split('\n').first.trim();
-    return line.isEmpty ? fallback : line;
   }
 
   // ── Building blocks ─────────────────────────────────────────────────────
@@ -829,4 +856,32 @@ class SettingsView extends GetView<SettingsController> {
       ),
     ]);
   }
+}
+
+/// A settings section on its own page. Rebuilds with the controller state.
+class _SettingsPage extends StatelessWidget {
+  final String title;
+  final WidgetBuilder builder;
+
+  /// Rebuild on controller changes. Off for pages that read no observables
+  /// (or manage their own Obx), which GetX would otherwise reject.
+  final bool reactive;
+  const _SettingsPage(
+      {required this.title, required this.builder, this.reactive = true});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
+    return Scaffold(
+      backgroundColor: t.bg,
+      appBar: appScreenBar(context, title: title, showBack: true),
+      body: reactive ? Obx(() => _list(context)) : _list(context),
+    );
+  }
+
+  Widget _list(BuildContext context) => ListView(
+        padding: kPagePadding,
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        children: [const SizedBox(height: 8), builder(context)],
+      );
 }

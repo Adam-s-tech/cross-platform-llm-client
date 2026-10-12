@@ -125,6 +125,25 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 }
+                "saveToDownloads" -> {
+                    val path = call.argument<String>("path")
+                    val name = call.argument<String>("name")
+                    if (path.isNullOrBlank() || name.isNullOrBlank()) {
+                        result.error("BAD_ARGS", "path and name are required", null)
+                        return@setMethodCallHandler
+                    }
+                    thread(name = "save-to-downloads") {
+                        try {
+                            val saved = saveFileToDownloads(File(path), name)
+                            mainHandler.post { result.success(saved) }
+                        } catch (e: Exception) {
+                            emitProgress("save:$name", 0, 0, 0.0, "Save failed")
+                            mainHandler.post {
+                                result.error("SAVE_FAILED", e.message ?: e.toString(), null)
+                            }
+                        }
+                    }
+                }
                 "restartApp" -> {
                     restartApp()
                     result.success(null)
@@ -580,6 +599,70 @@ class MainActivity : FlutterActivity() {
                 finishImportError("IMPORT_FAILED", e.message ?: e.toString())
             }
         }
+    }
+
+    /**
+     * Copies an in-app model file to the public Downloads folder, reporting
+     * progress as "save:<name>". MediaStore on Android 10+ (no permission
+     * needed); direct file write on Android 9.
+     */
+    private fun saveFileToDownloads(source: File, displayName: String): String {
+        if (!source.exists()) throw IllegalStateException("File not found: ${source.name}")
+        val key = "save:$displayName"
+        val total = source.length()
+        val started = System.nanoTime()
+        var lastEmit = 0L
+
+        fun copy(input: java.io.InputStream, output: java.io.OutputStream) {
+            val buffer = ByteArray(1 shl 20)
+            var copied = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+                copied += read
+                val now = System.nanoTime()
+                if (now - lastEmit > 250_000_000L) {
+                    lastEmit = now
+                    val secs = (now - started) / 1e9
+                    emitProgress(key, copied, total, if (secs > 0) copied / secs else 0.0,
+                        "Saving to Downloads...")
+                }
+            }
+        }
+
+        emitProgress(key, 0, total, 0.0, "Saving to Downloads...")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, displayName)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                put(android.provider.MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = contentResolver
+            val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("Couldn't create the file in Downloads")
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    source.inputStream().use { input -> copy(input, out) }
+                } ?: throw IllegalStateException("Couldn't open the Downloads file")
+                values.clear()
+                values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dir.mkdirs()
+            File(dir, displayName).outputStream().use { out ->
+                source.inputStream().use { input -> copy(input, out) }
+            }
+        }
+        emitProgress(key, total, total, 0.0, "Saved to Downloads")
+        return displayName
     }
 
     private fun emitProgress(

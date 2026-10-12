@@ -14,6 +14,7 @@ import 'package:uuid/uuid.dart';
 import 'package:gal/gal.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
+import '../core/ui.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../ffi/sd_ffi_bindings.dart';
@@ -34,7 +35,8 @@ Uint8List? _resizeVisionImageBytes(Map<String, dynamic> args) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return null;
 
-  final longestSide = decoded.width > decoded.height ? decoded.width : decoded.height;
+  final longestSide =
+      decoded.width > decoded.height ? decoded.width : decoded.height;
   if (longestSide <= _visionImageMaxSide) {
     return bytes;
   }
@@ -91,6 +93,7 @@ class ChatController extends GetxController {
   final _speech = stt.SpeechToText();
 
   final textController = TextEditingController();
+  final inputFocus = FocusNode();
   final scrollController = ScrollController();
   Timer? _scrollTimer;
   bool _followStreaming = true;
@@ -103,7 +106,10 @@ class ChatController extends GetxController {
     super.onInit();
     scrollController.addListener(_handleUserScroll);
     _scrollListenerAttached = true;
-    batchModeAccepted.value = _hive.getSetting<bool>(AppConstants.keyBatchModeWarningAccepted, defaultValue: false) ?? false;
+    batchModeAccepted.value = _hive.getSetting<bool>(
+            AppConstants.keyBatchModeWarningAccepted,
+            defaultValue: false) ??
+        false;
     loadSessions();
     _initSpeech();
   }
@@ -161,6 +167,7 @@ class ChatController extends GetxController {
       scrollController.removeListener(_handleUserScroll);
     }
     textController.dispose();
+    inputFocus.dispose();
     scrollController.dispose();
     super.onClose();
   }
@@ -221,10 +228,10 @@ class ChatController extends GetxController {
 
   // ─── Image Handling ─────────────────────────────
 
-  Future<void> pickImage() async {
+  Future<void> pickImage({ImageSource source = ImageSource.gallery}) async {
     final picker = ImagePicker();
     final file = await picker.pickImage(
-      source: ImageSource.gallery,
+      source: source,
       maxWidth: _visionImageMaxSide.toDouble(),
       maxHeight: _visionImageMaxSide.toDouble(),
       imageQuality: _visionImageJpegQuality,
@@ -259,48 +266,69 @@ class ChatController extends GetxController {
   void _checkVisionSupport() {
     final s = Get.find<SettingsController>();
     if (s.inferenceMode.value != 'cloud') return;
-    
+
     final provider = s.cloudProvider.value;
     String modelName = '';
     switch (provider) {
-      case 'anthropic': modelName = s.anthropicModel.value; break;
-      case 'google': modelName = s.googleModel.value; break;
-      case 'kimi': modelName = s.kimiModel.value; break;
-      case 'stability': modelName = s.stabilityModel.value; break;
-      case 'nvidia': modelName = s.nvidiaModel.value; break;
-      case 'openrouter': modelName = s.openRouterModel.value; break;
-      case 'deepseek': modelName = s.deepSeekModel.value; break;
-      case 'custom': modelName = s.customCloudModel.value; break;
-      default: modelName = s.openaiModel.value; break;
+      case 'anthropic':
+        modelName = s.anthropicModel.value;
+        break;
+      case 'google':
+        modelName = s.googleModel.value;
+        break;
+      case 'kimi':
+        modelName = s.kimiModel.value;
+        break;
+      case 'stability':
+        modelName = s.stabilityModel.value;
+        break;
+      case 'nvidia':
+        modelName = s.nvidiaModel.value;
+        break;
+      case 'openrouter':
+        modelName = s.openRouterModel.value;
+        break;
+      case 'deepseek':
+        modelName = s.deepSeekModel.value;
+        break;
+      case 'custom':
+        modelName = s.customCloudModel.value;
+        break;
+      default:
+        modelName = s.openaiModel.value;
+        break;
     }
-    
+
     final model = modelName.toLowerCase();
-    
+
     // Known vision keywords in cloud model names
-    final isVision = model.contains('vision') || 
-                     model.contains('-vl') || 
-                     model.contains('gpt-4o') || 
-                     model.contains('claude-3') || 
-                     model.contains('gemini') || 
-                     model.contains('pixtral') || 
-                     model.contains('llava') ||
-                     model.contains('omni');
-                     
+    final isVision = model.contains('vision') ||
+        model.contains('-vl') ||
+        model.contains('gpt-4o') ||
+        model.contains('claude-3') ||
+        model.contains('gemini') ||
+        model.contains('pixtral') ||
+        model.contains('llava') ||
+        model.contains('omni');
+
     if (!isVision) {
-      Get.snackbar(
+      showToast(
         'Warning: Text-Only Model',
         'The selected model ($modelName) might not support images. If you get an error, switch to a vision model (like Gemini, GPT-4o, or Claude 3).',
-        snackPosition: SnackPosition.TOP,
+        tone: ToastTone.warning,
         duration: const Duration(seconds: 6),
-        backgroundColor: const Color(0xFFFF9500).withValues(alpha: 0.95), // Warning Orange
-        colorText: Colors.white,
-        margin: const EdgeInsets.all(12),
       );
     }
   }
 
-  Future<void> pickFile() async {
+  /// [documentsOnly] limits the picker to PDF/DOCX/text/code — used for
+  /// text-only local models (e.g. GGUF) that can't take images or audio.
+  Future<void> pickFile({bool documentsOnly = false}) async {
     try {
+      const mediaExtensions = {
+        'png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', //
+        'mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac',
+      };
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: [
@@ -332,7 +360,7 @@ class ChatController extends GetxController {
           'js',
           'ts',
           'py'
-        ],
+        ].where((e) => !documentsOnly || !mediaExtensions.contains(e)).toList(),
         withData: kIsWeb,
       );
       if (result == null) return;
@@ -341,11 +369,20 @@ class ChatController extends GetxController {
       final fileType = _attachmentTypeForExtension(extension);
 
       // Reject unsupported or extension-less files
+      if (documentsOnly && (fileType == 'image' || fileType == 'audio')) {
+        showToast(
+          'Not supported by this model',
+          'This model reads text only. Attach a PDF, DOCX, or text/code file.',
+          tone: ToastTone.warning,
+        );
+        return;
+      }
+
       if (extension.isEmpty || fileType == 'file') {
-        Get.snackbar(
+        showToast(
           'Unsupported file',
           'Only images, audio, PDF, DOCX, and text/code files are supported.',
-          snackPosition: SnackPosition.BOTTOM,
+          tone: ToastTone.warning,
         );
         return;
       }
@@ -388,17 +425,14 @@ class ChatController extends GetxController {
               path,
               extension,
             );
-            if (content.length > 12000) {
-              content =
-                  '${content.substring(0, 12000)}\n\n[File truncated for context size]';
-            }
-            selectedFileContent.value = content;
+            selectedFileContent.value = _fitToContext(content);
           } catch (e) {
             Get.find<AppLogService>().warning(
               'Document extraction failed',
               details: e,
             );
-            selectedFileContent.value = '[Could not extract text from ${selectedFileName.value}: $e]';
+            selectedFileContent.value =
+                '[Could not extract text from ${selectedFileName.value}: $e]';
           }
         }
       } else if (fileType == 'text') {
@@ -406,18 +440,30 @@ class ChatController extends GetxController {
             (file.path != null ? await File(file.path!).readAsBytes() : null);
         if (bytes == null) return;
         selectedFileSize.value = file.size > 0 ? file.size : bytes.length;
-        var content = utf8.decode(bytes, allowMalformed: true);
-        if (content.length > 12000) {
-          content =
-              '${content.substring(0, 12000)}\n\n[File truncated for context size]';
-        }
-        selectedFileContent.value = content;
+        selectedFileContent.value =
+            _fitToContext(utf8.decode(bytes, allowMalformed: true));
       }
     } catch (e) {
       Get.find<AppLogService>().warning('File attachment failed', details: e);
-      Get.snackbar('File not attached', '$e',
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('File not attached', '$e', tone: ToastTone.error);
     }
+  }
+
+  /// Trims extracted document text so it fits the model's context window.
+  /// Cloud models get up to 12k chars; local models get roughly half their
+  /// context (~4 chars per token), leaving room for history and the reply.
+  String _fitToContext(String content) {
+    var limit = 12000;
+    final s = Get.find<SettingsController>();
+    if (s.inferenceMode.value == 'local') {
+      final inf = Get.find<InferenceService>();
+      final ctx = inf.contextTokensTotal.value > 0
+          ? inf.contextTokensTotal.value
+          : s.contextSize.value;
+      if (ctx > 0) limit = (ctx * 2).clamp(2000, 12000).toInt();
+    }
+    if (content.length <= limit) return content;
+    return '${content.substring(0, limit)}\n\n[File truncated to fit the model\'s context window]';
   }
 
   void clearFile() {
@@ -462,7 +508,7 @@ class ChatController extends GetxController {
 
   Future<void> generateBatch() async {
     if (batchPrompts.isEmpty || isLoading.value || isStreaming.value) return;
-    
+
     // Copy the list to avoid concurrent modification issues
     final promptsToRun = List<String>.from(batchPrompts);
     batchPrompts.clear();
@@ -480,10 +526,12 @@ class ChatController extends GetxController {
 
       // Capture generated image
       final lastMsg = messages.lastOrNull;
-      if (lastMsg != null && lastMsg.role == 'assistant' && lastMsg.imageBase64 != null) {
+      if (lastMsg != null &&
+          lastMsg.role == 'assistant' &&
+          lastMsg.imageBase64 != null) {
         generatedImagesBase64.add(lastMsg.imageBase64!);
       }
-      
+
       // Add a small delay between generations to let UI breathe
       await Future.delayed(const Duration(milliseconds: 1000));
     }
@@ -500,17 +548,21 @@ class ChatController extends GetxController {
       if (!hasAccess) {
         final granted = await Gal.requestAccess();
         if (!granted) {
-          Get.snackbar('Permission Denied', 'Cannot save images without gallery access.');
+          showToast(
+              'Permission Denied', 'Cannot save images without gallery access.',
+              tone: ToastTone.error);
           return;
         }
       }
       for (final base64 in lastBatchImagesBase64) {
         await Gal.putImageBytes(base64Decode(base64));
       }
-      Get.snackbar('Success', 'Saved ${lastBatchImagesBase64.length} images to gallery.', backgroundColor: const Color(0xFF34C759).withValues(alpha: 0.9), colorText: const Color(0xFFFFFFFF));
+      showToast(
+          'Success', 'Saved ${lastBatchImagesBase64.length} images to gallery.',
+          tone: ToastTone.success);
       lastBatchImagesBase64.clear();
     } catch (e) {
-      Get.snackbar('Error', 'Failed to save images: $e');
+      showToast('Error', 'Failed to save images: $e', tone: ToastTone.error);
     }
   }
 
@@ -570,7 +622,7 @@ class ChatController extends GetxController {
     messages.add(userMsg);
     _hive.saveMessage(userMsg.id, userMsg.toMap());
 
-    // Clear input preview UI state — but KEEP the physical file on disk 
+    // Clear input preview UI state — but KEEP the physical file on disk
     // because the native inference engine needs to read it during generation.
     textController.clear();
     inputText.value = '';
@@ -647,7 +699,7 @@ class ChatController extends GetxController {
           final imageNotifications =
               Get.find<ImageGenerationNotificationService>();
           final steps = _hive.getSetting<int>(AppConstants.keyImageSteps,
-              defaultValue: AppConstants.defaultImageSteps) ??
+                  defaultValue: AppConstants.defaultImageSteps) ??
               AppConstants.defaultImageSteps;
           final sizeSetting = settings.imageGenSize.value;
           final sizeLabel =
@@ -674,18 +726,21 @@ class ChatController extends GetxController {
             prompt: text,
             onProgress: (step, total) {
               if (generationId != _generationSerial) return;
-              print('[ChatController] Progress callback: step=$step, total=$total');
+              print(
+                  '[ChatController] Progress callback: step=$step, total=$total');
               imageGenStep.value = step;
               imageGenTotal.value = total;
               if (step >= total && total > 0) {
                 imageGenDecoding.value = true;
-                print('[ChatController] Sampling complete, VAE decode in progress');
+                print(
+                    '[ChatController] Sampling complete, VAE decode in progress');
                 imageNotifications.decoding();
               }
               if (step > 0 && total > 0 && step < total) {
                 final start = imageGenStartTime.value;
                 if (start != null) {
-                  final elapsed = DateTime.now().difference(start).inMilliseconds;
+                  final elapsed =
+                      DateTime.now().difference(start).inMilliseconds;
                   final avgMsPerStep = elapsed / step;
                   final remainingSteps = total - step;
                   imageGenEstimatedSecs.value =
@@ -707,9 +762,12 @@ class ChatController extends GetxController {
           );
           // Calculate total generation time
           final genDurationMs = imageGenStartTime.value != null
-              ? DateTime.now().difference(imageGenStartTime.value!).inMilliseconds
+              ? DateTime.now()
+                  .difference(imageGenStartTime.value!)
+                  .inMilliseconds
               : null;
-          print('[ChatController] generateImage returned, bytes=${pngBytes?.length}, duration=${genDurationMs}ms');
+          print(
+              '[ChatController] generateImage returned, bytes=${pngBytes?.length}, duration=${genDurationMs}ms');
 
           // A stopped job must not post a completed/failed notification.
           if (generationId != _generationSerial) return;
@@ -736,7 +794,8 @@ class ChatController extends GetxController {
             source: 'chat',
             imagePath: imagePath,
             audioPath: fileType == 'audio' ? filePath : null,
-            stopSequences: Get.find<SettingsController>().stopSequences.toList(),
+            stopSequences:
+                Get.find<SettingsController>().stopSequences.toList(),
             onToken: (token) {
               // Ignore tokens from a generation the user already stopped.
               if (generationId != _generationSerial) return;

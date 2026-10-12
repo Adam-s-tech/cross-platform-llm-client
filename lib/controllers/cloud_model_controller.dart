@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/constants.dart';
+import '../core/ui.dart';
 import '../services/app_log_service.dart';
 import '../services/hive_service.dart';
 import 'settings_controller.dart';
@@ -301,8 +302,8 @@ class CloudModelController extends GetxController {
     await _settings.setCloudModel(provider, normalized);
     await _settings.setInferenceMode('cloud');
     if (!showSnackbar) return;
-    Get.snackbar('Cloud Model Active', '$provider · $normalized',
-        snackPosition: SnackPosition.BOTTOM);
+    showToast('Cloud Model Active', '$provider · $normalized',
+        tone: ToastTone.success);
   }
 
   Future<void> saveCustomProvider() async {

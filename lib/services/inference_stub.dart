@@ -26,6 +26,8 @@ class LoadResult {
 }
 
 class InferenceEngine {
+  bool get ggufVisionLoaded => false;
+
   Future<LoadResult> loadModel({
     required String modelPath,
     String? modelRuntime,
@@ -36,6 +38,7 @@ class InferenceEngine {
     bool clearLiteRtCache = false,
     bool enableLiteRtVision = false,
     bool allowGgufGpu = false,
+    String? mmprojPath,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(

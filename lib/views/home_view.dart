@@ -2,26 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../controllers/home_controller.dart';
+import '../widgets/chat_drawer.dart';
 import 'chat_view.dart';
 import 'model_view.dart';
 import 'server_view.dart';
 import 'settings_view.dart';
+import '../core/haptics.dart';
 
 class HomeView extends GetView<HomeController> {
   const HomeView({super.key});
 
   static const _tabs = [
     _NavItem(
-        icon: Icons.bubble_chart_outlined,
-        activeIcon: Icons.bubble_chart,
+        icon: Icons.chat_bubble_outline_rounded,
+        activeIcon: Icons.chat_bubble_rounded,
         label: 'Chat'),
     _NavItem(
-        icon: Icons.arrow_downward_rounded,
-        activeIcon: Icons.arrow_downward_rounded,
+        icon: Icons.layers_outlined,
+        activeIcon: Icons.layers_rounded,
         label: 'Models'),
     _NavItem(
-        icon: Icons.dns_outlined,
-        activeIcon: Icons.dns_rounded,
+        icon: Icons.lan_outlined,
+        activeIcon: Icons.lan_rounded,
         label: 'Server'),
     _NavItem(
         icon: Icons.settings_outlined,
@@ -37,41 +39,47 @@ class HomeView extends GetView<HomeController> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      controller.checkResumeModel(context);
-    });
-    return Scaffold(
-      backgroundColor: isDark ? Colors.black : Colors.white,
-      body: Obx(() {
-        final content = IndexedStack(
-          index: controller.currentTab.value,
-          children: const [
-            ChatView(),
-            ModelView(),
-            ServerView(),
-            SettingsView()
-          ],
-        );
-        if (_isWide) {
-          return Row(children: [
-            _buildSidebar(context, isDark),
-            VerticalDivider(
-                width: 0.5,
-                thickness: 0.5,
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.08)
-                    : Colors.black.withValues(alpha: 0.08)),
-            Expanded(child: content),
-          ]);
-        }
-        return content;
-      }),
-      bottomNavigationBar:
-          _isWide ? null : Obx(() => _buildBottomNav(context, isDark)),
-    );
+    return Obx(() => Scaffold(
+          key: controller.scaffoldKey,
+          backgroundColor: isDark ? Colors.black : Colors.white,
+          drawer: const ChatDrawer(),
+          drawerScrimColor: Colors.black.withValues(alpha: isDark ? 0.6 : 0.32),
+          // Edge-swipe only where the sidebar makes sense.
+          drawerEnableOpenDragGesture: controller.currentTab.value == 0,
+          drawerEdgeDragWidth: 28,
+          body: Obx(() {
+            final content = IndexedStack(
+              index: controller.currentTab.value,
+              children: const [
+                ChatView(),
+                ModelView(),
+                ServerView(),
+                SettingsView()
+              ],
+            );
+            if (_isWide) {
+              return Row(children: [
+                _buildSidebar(context, isDark),
+                VerticalDivider(
+                    width: 0.5,
+                    thickness: 0.5,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.black.withValues(alpha: 0.08)),
+                Expanded(child: content),
+              ]);
+            }
+            return content;
+          }),
+          bottomNavigationBar:
+              _isWide ? null : _buildBottomNav(context, isDark),
+        ));
   }
 
   Widget _buildBottomNav(BuildContext context, bool isDark) {
+    final accent = isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
+    final muted = isDark ? const Color(0xFF7C7C80) : const Color(0xFF8E8E93);
+    final current = controller.currentTab.value;
     return Container(
       decoration: BoxDecoration(
         color: isDark ? Colors.black : Colors.white,
@@ -83,25 +91,51 @@ class HomeView extends GetView<HomeController> {
           width: 0.5,
         )),
       ),
-      child: BottomNavigationBar(
-        currentIndex: controller.currentTab.value,
-        onTap: controller.changeTab,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        items: [
-          for (final tab in _tabs)
-            BottomNavigationBarItem(
-              icon: Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Icon(tab.icon, size: 22),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 54,
+          child: Row(children: [
+            for (var i = 0; i < _tabs.length; i++)
+              Expanded(
+                child: Semantics(
+                  selected: current == i,
+                  button: true,
+                  label: _tabs[i].label,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (current != i) Haptics.selectionClick();
+                      controller.changeTab(i);
+                    },
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 160),
+                          child: Icon(
+                            current == i ? _tabs[i].activeIcon : _tabs[i].icon,
+                            key: ValueKey(current == i),
+                            size: 23,
+                            color: current == i ? accent : muted,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(_tabs[i].label,
+                            style: GoogleFonts.inter(
+                                fontSize: 10.5,
+                                letterSpacing: 0.1,
+                                fontWeight: current == i
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                                color: current == i ? accent : muted)),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              activeIcon: Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Icon(tab.activeIcon, size: 22),
-              ),
-              label: tab.label,
-            ),
-        ],
+          ]),
+        ),
       ),
     );
   }

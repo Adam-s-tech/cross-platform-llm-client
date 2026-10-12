@@ -22,6 +22,17 @@ class AiModel {
   final bool isImported;
   final bool isCustom;
 
+  /// GGUF vision models ship a separate projector ("mmproj") file that
+  /// turns images into tokens. Empty for text-only models.
+  final String mmprojFilename;
+  final String mmprojUrl;
+
+  bool get hasVisionProjector => mmprojFilename.isNotEmpty;
+
+  /// Model-list filters ('general', 'vision', 'image', 'uncensored') in
+  /// which this model is tagged as the recommended pick.
+  final Set<String> recommendedFor;
+
   AiModel({
     required this.name,
     required this.filename,
@@ -33,6 +44,9 @@ class AiModel {
     this.isVision = false,
     this.isImported = false,
     this.isCustom = false,
+    this.mmprojFilename = '',
+    this.mmprojUrl = '',
+    this.recommendedFor = const {},
   }) : runtime = runtime ?? runtimeFromFilename(filename, template: template);
 
   factory AiModel.fromMap(Map<String, String> map) => AiModel(
@@ -46,6 +60,13 @@ class AiModel {
         isVision: map['vision'] == 'true',
         isImported: map['imported'] == 'true',
         isCustom: map['custom'] == 'true',
+        mmprojFilename: map['mmproj_filename'] ?? '',
+        mmprojUrl: map['mmproj_url'] ?? '',
+        recommendedFor: (map['recommended'] ?? '')
+            .split(',')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toSet(),
       );
 
   Map<String, String> toMap() => {
@@ -59,6 +80,9 @@ class AiModel {
         if (isVision) 'vision': 'true',
         if (isImported) 'imported': 'true',
         if (isCustom) 'custom': 'true',
+        if (mmprojFilename.isNotEmpty) 'mmproj_filename': mmprojFilename,
+        if (mmprojUrl.isNotEmpty) 'mmproj_url': mmprojUrl,
+        if (recommendedFor.isNotEmpty) 'recommended': recommendedFor.join(','),
       };
 
   static String runtimeFromFilename(String filename, {String? template}) {
@@ -81,6 +105,9 @@ class AiModel {
     bool? isVision,
     bool? isImported,
     bool? isCustom,
+    String? mmprojFilename,
+    String? mmprojUrl,
+    Set<String>? recommendedFor,
   }) {
     return AiModel(
       name: name ?? this.name,
@@ -93,6 +120,9 @@ class AiModel {
       isVision: isVision ?? this.isVision,
       isImported: isImported ?? this.isImported,
       isCustom: isCustom ?? this.isCustom,
+      mmprojFilename: mmprojFilename ?? this.mmprojFilename,
+      mmprojUrl: mmprojUrl ?? this.mmprojUrl,
+      recommendedFor: recommendedFor ?? this.recommendedFor,
     );
   }
 }

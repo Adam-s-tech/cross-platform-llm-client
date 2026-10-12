@@ -6,6 +6,8 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import '../core/constants.dart';
+import '../core/haptics.dart';
+import '../core/ui.dart';
 import '../services/hive_service.dart';
 import '../services/app_log_service.dart';
 import '../services/local_image_service.dart';
@@ -48,6 +50,7 @@ class SettingsController extends GetxController {
   final maxTokens = 512.obs;
   final contextSize = 2048.obs;
   final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
+
   final imageSteps = 1.obs;
   final imageGenForceCpu = AppConstants.defaultImageGenForceCpu.obs;
   final imageGenBackend = Backend.cpu.obs;
@@ -55,6 +58,7 @@ class SettingsController extends GetxController {
   final imageGenGpuGuardMb = AppConstants.defaultImageGenGpuGuardMb.obs;
   final imageGenSize = AppConstants.defaultImageGenSize.obs;
   final fontScale = AppConstants.defaultFontScale.obs;
+  final hapticsEnabled = true.obs;
   final appVersion = ''.obs;
 
   // Persistent text controllers for settings fields
@@ -230,6 +234,11 @@ class SettingsController extends GetxController {
     fontScale.value = _hive.getSetting(AppConstants.keyFontScale,
             defaultValue: AppConstants.defaultFontScale) ??
         AppConstants.defaultFontScale;
+    hapticsEnabled.value = _hive.getSetting<bool>(
+            AppConstants.keyHapticsEnabled,
+            defaultValue: true) ??
+        true;
+    Haptics.enabled = hapticsEnabled.value;
 
     // Sync controllers with loaded values
     openaiKeyController.text = openaiKey.value;
@@ -608,16 +617,15 @@ class SettingsController extends GetxController {
         .take(8)
         .toList();
     stopSequences.value = list;
-    stopSequencesController.text = text
-        .split('\n')
-        .where((l) => l.trim().isNotEmpty)
-        .take(8)
-        .join('\n');
+    stopSequencesController.text =
+        text.split('\n').where((l) => l.trim().isNotEmpty).take(8).join('\n');
     await _hive.setSetting(AppConstants.keyStopSequences, list);
-    Get.snackbar('Saved', list.isEmpty
-        ? 'Stop sequences cleared.'
-        : '${list.length} stop sequence(s) saved.',
-        snackPosition: SnackPosition.BOTTOM);
+    showToast(
+        'Saved',
+        list.isEmpty
+            ? 'Stop sequences cleared.'
+            : '${list.length} stop sequence(s) saved.',
+        tone: ToastTone.success);
   }
 
   Future<void> setGlobalSystemPrompt(String prompt) async {
@@ -702,9 +710,6 @@ class SettingsController extends GetxController {
     };
     liteRtPerformanceMode.value = normalized;
     await _hive.setSetting(AppConstants.keyLiteRtPerformanceMode, normalized);
-    if (normalized == 'gpu_fast') {
-      await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
-    }
   }
 
   Future<void> setImageSteps(int value) async {
@@ -777,6 +782,14 @@ class SettingsController extends GetxController {
     if (Get.isRegistered<LocalImageService>()) {
       Get.find<LocalImageService>().setBackend(backend);
     }
+  }
+
+  Future<void> setHapticsEnabled(bool value) async {
+    hapticsEnabled.value = value;
+    Haptics.enabled = value;
+    // A little confirmation tick when turning it on.
+    Haptics.selectionClick();
+    await _hive.setSetting(AppConstants.keyHapticsEnabled, value);
   }
 
   Future<void> setFontScale(double value) async {

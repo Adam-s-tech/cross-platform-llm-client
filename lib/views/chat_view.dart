@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../controllers/chat_controller.dart';
 import '../controllers/settings_controller.dart';
@@ -15,7 +16,11 @@ import '../ffi/sd_ffi_bindings.dart';
 import '../utils/thought_parser.dart';
 import '../widgets/attachment_preview.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/chat_drawer.dart';
+import '../widgets/home_empty_state.dart';
+import '../core/ui.dart';
 import '../widgets/thought_disclosure.dart';
+import '../core/haptics.dart';
 
 // ── Apple-style color helpers ──
 Color _appleBlue(BuildContext c) => Theme.of(c).brightness == Brightness.dark
@@ -42,7 +47,6 @@ class ChatView extends GetView<ChatController> {
       body: Column(
         children: [
           _modelLoadingBar(context, isDark),
-          _contextBar(context, isDark),
           Expanded(child: Obx(() {
             if (controller.currentSessionId.value.isEmpty ||
                 controller.messages.isEmpty) {
@@ -98,125 +102,323 @@ class ChatView extends GetView<ChatController> {
       elevation: 0,
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(0.5),
-        child: Container(height: 0.5, color: _sep(context)),
+        child: Obx(() => Container(
+            height: 0.5,
+            color: controller.messages.isEmpty
+                ? Colors.transparent
+                : _sep(context))),
       ),
       titleSpacing: 0,
+      leadingWidth: 52,
+      leading: IconButton(
+        tooltip: 'Chats',
+        onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Get.find<HomeController>().openSidebar();
+        },
+        icon: SidebarGlyph(color: isDark ? Colors.white : Colors.black),
+      ),
       title: Obx(() {
-        final sid = controller.currentSessionId.value;
-        final settings = Get.find<SettingsController>();
-        final inf = Get.find<InferenceService>();
-        final isLocal = settings.inferenceMode.value == 'local';
-        String model;
-        if (isLocal) {
-          final localImage = Get.find<LocalImageService>();
-          if (inf.isModelLoaded.value) {
-            model = inf.loadedModelName.value
-                .replaceAll('.gguf', '')
-                .replaceAll('.GGUF', '');
-          } else if (localImage.isModelLoaded.value) {
-            final backend = localImage.currentBackend.value;
-            final backendEmoji = backend == Backend.cpu ? '🖥' : '⚡';
-            final backendName = backend.displayName.split(' ').first;
-            model =
-                '$backendEmoji $backendName · ${localImage.loadedModelName.value.replaceAll('.gguf', '').replaceAll('.GGUF', '')}';
-          } else {
-            model = 'No model loaded';
-          }
-          if (model.length > 24) model = '${model.substring(0, 24)}…';
-        } else {
-          final p = settings.cloudProvider.value;
-          model = p == 'openai'
-              ? settings.openaiModel.value
-              : p == 'anthropic'
-                  ? settings.anthropicModel.value
-                  : p == 'google'
-                      ? settings.googleModel.value
-                      : p == 'stability'
-                          ? settings.stabilityModel.value
-                          : p == 'nvidia'
-                              ? settings.nvidiaModel.value
-                              : p == 'openrouter'
-                                  ? settings.openRouterModel.value
-                                  : p == 'custom'
-                                      ? settings.customCloudModel.value
-                                      : settings.kimiModel.value;
-          if (p == 'custom' && model.isNotEmpty) {
-            model = '${settings.customCloudName.value}: $model';
-          }
-        }
-        final title = sid.isEmpty
-            ? 'PrivateLM'
-            : controller.sessions.firstWhereOrNull((s) => s.id == sid)?.title ??
-                'Chat';
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title,
+        final text = isDark ? Colors.white : Colors.black;
+        // Home: a quiet wordmark — the model card below carries the status.
+        if (controller.messages.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Text('PrivateLM',
                 style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 17,
-                    color: isDark ? Colors.white : Colors.black),
-                overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 2),
-            Row(children: [
-              Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isLocal
-                          ? (inf.isModelLoaded.value
-                              ? const Color(0xFF34C759)
-                              : const Color(0xFFFF9500))
-                          : _appleBlue(context))),
-              const SizedBox(width: 5),
-              Flexible(
-                  child: Text('$model · ${isLocal ? "Local" : "Cloud"}',
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                    letterSpacing: -0.5,
+                    color: text)),
+          );
+        }
+        final sid = controller.currentSessionId.value;
+        final info = _modelInfo(context);
+        final title =
+            controller.sessions.firstWhereOrNull((s) => s.id == sid)?.title ??
+                'Chat';
+        // Title + model line; tapping opens the model sheet.
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _showModelSheet(context),
+          child: Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: Theme.of(context).hintColor,
-                          fontWeight: FontWeight.w400),
-                      overflow: TextOverflow.ellipsis)),
-              if (isLocal && inf.isGpuAccelerated.value) ...[
-                const SizedBox(width: 4),
-                const Icon(Icons.bolt, size: 11, color: Color(0xFFFF9500)),
-                Text('GPU',
-                    style: GoogleFonts.inter(
-                        fontSize: 10,
-                        color: const Color(0xFFFF9500),
-                        fontWeight: FontWeight.w600)),
-              ],
-            ]),
-          ]),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                          letterSpacing: -0.3,
+                          color: text)),
+                  const SizedBox(height: 1),
+                  Row(children: [
+                    Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle, color: info.dot)),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(info.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                              fontSize: 12.5,
+                              color: Theme.of(context).hintColor)),
+                    ),
+                    Icon(Icons.expand_more_rounded,
+                        size: 16, color: Theme.of(context).hintColor),
+                  ]),
+                ]),
+          ),
         );
       }),
       actions: [
         Obx(() {
-          final isLocal =
-              Get.find<SettingsController>().inferenceMode.value == 'local';
-          final inf = Get.find<InferenceService>();
-          final localImage = Get.find<LocalImageService>();
-          if (isLocal &&
-              (inf.isModelLoaded.value || localImage.isModelLoaded.value)) {
-            return IconButton(
-              tooltip: 'Unload Model',
-              icon: const Icon(Icons.eject_outlined,
-                  size: 20, color: Color(0xFFFF3B30)),
-              onPressed: () => Get.find<ModelController>().unloadModel(),
-            );
-          }
-          return const SizedBox.shrink();
+          if (controller.messages.isEmpty) return const SizedBox.shrink();
+          final usage = _contextUsage();
+          if (usage == null) return const SizedBox.shrink();
+          final warn = usage.pct >= 0.75;
+          return IconButton(
+            tooltip: 'Context ${(usage.pct * 100).round()}% used',
+            onPressed: () => _showModelSheet(context),
+            icon: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                value: usage.pct < 0.02 ? 0.02 : usage.pct,
+                strokeWidth: 2.4,
+                strokeCap: StrokeCap.round,
+                backgroundColor: _sep(context),
+                color: warn
+                    ? const Color(0xFFFF9500)
+                    : Theme.of(context).hintColor,
+              ),
+            ),
+          );
         }),
-        IconButton(
-            icon: Icon(Icons.history_rounded,
-                size: 20, color: Theme.of(context).hintColor),
-            onPressed: () => _showHistory(context)),
-        IconButton(
-            tooltip: 'New Chat',
-            icon: Icon(Icons.edit_note, size: 22, color: _appleBlue(context)),
-            onPressed: () => controller.createNewChat()),
+        Obx(() {
+          // Already on a blank chat — a "new chat" button would only create
+          // empty sessions.
+          if (controller.messages.isEmpty) return const SizedBox(width: 8);
+          return IconButton(
+              tooltip: 'New chat',
+              icon: Icon(Icons.edit_square,
+                  size: 20, color: isDark ? Colors.white : Colors.black),
+              onPressed: () {
+                Haptics.selectionClick();
+                controller.createNewChat();
+              });
+        }),
+        const SizedBox(width: 4),
       ],
+    );
+  }
+
+  /// Name and status colour of whatever will answer the next message.
+  ({String name, String meta, Color dot, bool canUnload}) _modelInfo(
+      BuildContext context) {
+    final settings = Get.find<SettingsController>();
+    final inf = Get.find<InferenceService>();
+    final img = Get.find<LocalImageService>();
+    const green = Color(0xFF34C759);
+    const orange = Color(0xFFFF9500);
+    String pretty(String n) => n.replaceAll(
+        RegExp(r'\.(gguf|litertlm|task|bin)$', caseSensitive: false), '');
+
+    if (settings.inferenceMode.value != 'local') {
+      final m = settings.selectedCloudModelName;
+      return (
+        name: m.isEmpty ? 'No model selected' : m,
+        meta: 'Cloud · ${providerLabel(settings)}',
+        dot: _appleBlue(context),
+        canUnload: false,
+      );
+    }
+    if (inf.isLoadingModel.value) {
+      return (
+        name: 'Loading model…',
+        meta: '${(inf.modelLoadProgress.value * 100).round()}%',
+        dot: orange,
+        canUnload: false,
+      );
+    }
+    if (inf.isModelLoaded.value) {
+      return (
+        name: pretty(inf.loadedModelName.value),
+        meta: [
+          'Ready',
+          inf.isGpuAccelerated.value ? 'GPU' : 'CPU',
+          inf.loadedModelRuntime.value == 'litert' ? 'LiteRT' : 'GGUF',
+        ].join(' · '),
+        dot: green,
+        canUnload: true,
+      );
+    }
+    if (img.isModelLoaded.value) {
+      final b = img.currentBackend.value;
+      return (
+        name: pretty(img.loadedModelName.value),
+        meta:
+            'Ready · Image generation · ${b == Backend.cpu ? 'CPU' : b.displayName.split(' ').first}',
+        dot: green,
+        canUnload: true,
+      );
+    }
+    return (
+      name: 'No model loaded',
+      meta: 'Load a model to continue this chat',
+      dot: orange,
+      canUnload: false,
+    );
+  }
+
+  /// Local context-window usage, or null when it doesn't apply.
+  ({int used, int total, double pct})? _contextUsage() {
+    final settings = Get.find<SettingsController>();
+    final inf = Get.find<InferenceService>();
+    if (settings.inferenceMode.value != 'local' || !inf.isModelLoaded.value) {
+      return null;
+    }
+    final total = inf.contextTokensTotal.value > 0
+        ? inf.contextTokensTotal.value
+        : settings.contextSize.value;
+    final est =
+        controller.messages.fold<int>(0, (s, m) => s + m.content.length);
+    final used = (inf.contextTokensUsed.value > 0
+            ? inf.contextTokensUsed.value
+            : (est / 4).ceil())
+        .clamp(0, total)
+        .toInt();
+    final pct = total == 0 ? 0.0 : (used / total).clamp(0.0, 1.0).toDouble();
+    return (used: used, total: total, pct: pct);
+  }
+
+  // ── Model sheet ──
+  void _showModelSheet(BuildContext context) {
+    Haptics.selectionClick();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+          child: Obx(() {
+            final info = _modelInfo(ctx);
+            final usage = _contextUsage();
+            final text = isDark ? Colors.white : const Color(0xFF0B0B0C);
+            final muted = Theme.of(ctx).hintColor;
+            final warn = (usage?.pct ?? 0) >= 0.75;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: _sep(ctx).withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text('Model',
+                    style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: muted)),
+                const SizedBox(height: 6),
+                Text(info.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.3,
+                        color: text)),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle, color: info.dot)),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(info.meta,
+                        style: GoogleFonts.inter(fontSize: 13, color: muted)),
+                  ),
+                ]),
+                if (usage != null) ...[
+                  const SizedBox(height: 22),
+                  Row(children: [
+                    Expanded(
+                      child: Text('Context',
+                          style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: muted)),
+                    ),
+                    Text('${_fmtK(usage.used)} / ${_fmtK(usage.total)} tokens',
+                        style: GoogleFonts.inter(
+                            fontSize: 13,
+                            color: warn ? const Color(0xFFFF9500) : muted,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures()
+                            ])),
+                  ]),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: usage.pct,
+                      minHeight: 5,
+                      backgroundColor: isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.06),
+                      color: warn ? const Color(0xFFFF9500) : _appleBlue(ctx),
+                    ),
+                  ),
+                  if (warn) ...[
+                    const SizedBox(height: 8),
+                    Text('Almost full. Start a new chat for best results.',
+                        style: GoogleFonts.inter(fontSize: 12.5, color: muted)),
+                  ],
+                ],
+                const SizedBox(height: 24),
+                Row(children: [
+                  Expanded(
+                    child: TonalButton.neutral(ctx, label: 'Switch model',
+                        onTap: () {
+                      Navigator.pop(ctx);
+                      Get.find<HomeController>().changeTab(1);
+                    }),
+                  ),
+                  if (info.canUnload) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TonalButton.destructive(ctx, label: 'Unload',
+                          onTap: () {
+                        Navigator.pop(ctx);
+                        Get.find<ModelController>().unloadModel();
+                      }),
+                    ),
+                  ],
+                ]),
+              ],
+            );
+          }),
+        ),
+      ),
     );
   }
 
@@ -225,28 +427,28 @@ class ChatView extends GetView<ChatController> {
     return Obx(() {
       final inf = Get.find<InferenceService>();
       if (!inf.isLoadingModel.value) return const SizedBox.shrink();
-      final pct = (inf.modelLoadProgress.value * 100).toStringAsFixed(0);
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-        color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      final pct = (inf.modelLoadProgress.value * 100).round();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
-            SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                    strokeWidth: 1.5, color: _appleBlue(context))),
-            const SizedBox(width: 8),
-            Text('Loading model… $pct%',
+            Expanded(
+              child: Text('Loading model',
+                  style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      color: Theme.of(context).hintColor,
+                      fontWeight: FontWeight.w500)),
+            ),
+            Text('$pct%',
                 style: GoogleFonts.inter(
-                    fontSize: 12,
+                    fontSize: 12.5,
                     color: Theme.of(context).hintColor,
-                    fontWeight: FontWeight.w500)),
+                    fontFeatures: const [FontFeature.tabularFigures()])),
           ]),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           ClipRRect(
-              borderRadius: BorderRadius.circular(3),
+              borderRadius: BorderRadius.circular(2),
               child: LinearProgressIndicator(
                   value: inf.modelLoadProgress.value,
                   backgroundColor: _sep(context),
@@ -257,174 +459,9 @@ class ChatView extends GetView<ChatController> {
     });
   }
 
-  // ── Context Bar ──
-  Widget _contextBar(BuildContext context, bool isDark) {
-    return Obx(() {
-      final settings = Get.find<SettingsController>();
-      final inf = Get.find<InferenceService>();
-      final active = controller.currentSessionId.value.isNotEmpty &&
-          controller.messages.isNotEmpty;
-      if (!active || settings.inferenceMode.value != 'local') {
-        return const SizedBox.shrink();
-      }
-      final total = inf.contextTokensTotal.value > 0
-          ? inf.contextTokensTotal.value
-          : settings.contextSize.value;
-      final est =
-          controller.messages.fold<int>(0, (s, m) => s + m.content.length);
-      final used = (inf.contextTokensUsed.value > 0
-              ? inf.contextTokensUsed.value
-              : (est / 4).ceil())
-          .clamp(0, total)
-          .toInt();
-      final pct = total == 0 ? 0.0 : (used / total).clamp(0.0, 1.0).toDouble();
-      final warn = pct >= 0.75;
-      final accent = warn ? const Color(0xFFFF9500) : _appleBlue(context);
-      return Container(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        decoration: BoxDecoration(
-            border:
-                Border(bottom: BorderSide(color: _sep(context), width: 0.5))),
-        child: Row(children: [
-          Icon(Icons.memory_rounded, size: 14, color: accent),
-          const SizedBox(width: 6),
-          Text('${_fmtK(used)} / ${_fmtK(total)}',
-              style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: Theme.of(context).hintColor,
-                  fontWeight: FontWeight.w500)),
-          const SizedBox(width: 8),
-          Expanded(
-              child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                      value: pct,
-                      backgroundColor: _sep(context),
-                      color: accent,
-                      minHeight: 3))),
-          const SizedBox(width: 8),
-          Text('${(pct * 100).toStringAsFixed(0)}%',
-              style: GoogleFonts.inter(
-                  fontSize: 11, color: accent, fontWeight: FontWeight.w600)),
-        ]),
-      );
-    });
-  }
-
   // ── Empty State ──
-  Widget _emptyState(BuildContext context, bool isDark) {
-    final suggestions = [
-      'Explain quantum computing simply',
-      'Write a short poem about time',
-      'Help me debug my code',
-      'Summarize a complex topic'
-    ];
-    return Center(
-        child: SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Image.asset(
-          'assets/icons/appicon.png',
-          width: 120,
-          height: 120,
-        ),
-        const SizedBox(height: 20),
-        Text('Hello.',
-            style: GoogleFonts.inter(
-                fontSize: 32,
-                fontWeight: FontWeight.w700,
-                color: isDark ? Colors.white : Colors.black)),
-        const SizedBox(height: 6),
-        Text('How can I help you today?',
-            style: GoogleFonts.inter(
-                fontSize: 16,
-                color: Theme.of(context).hintColor,
-                fontWeight: FontWeight.w400)),
-        const SizedBox(height: 32),
-        Obx(() {
-          final settings = Get.find<SettingsController>();
-          final models = Get.find<ModelController>();
-          final isLocal = settings.inferenceMode.value == 'local';
-          if (isLocal && models.downloadedCount == 0) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFF9500).withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(children: [
-                const Icon(Icons.download_rounded,
-                    color: Color(0xFFFF9500), size: 36),
-                const SizedBox(height: 14),
-                Text('No Local Models',
-                    style: GoogleFonts.inter(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: isDark ? Colors.white : Colors.black)),
-                const SizedBox(height: 6),
-                Text(
-                    'You need to download a model to use local inference on your device.',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.inter(
-                        fontSize: 14, color: Theme.of(context).hintColor)),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: () => Get.find<HomeController>().changeTab(1),
-                  icon: const Icon(Icons.arrow_downward_rounded, size: 18),
-                  label: const Text('Go to Models'),
-                  style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF9500),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 12),
-                      textStyle: GoogleFonts.inter(
-                          fontSize: 15, fontWeight: FontWeight.w600)),
-                ),
-              ]),
-            );
-          }
-          return Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
-            children: suggestions
-                .map((s) => _suggestionChip(context, s, isDark))
-                .toList(),
-          );
-        }),
-      ]),
-    ));
-  }
-
-  Widget _suggestionChip(BuildContext context, String text, bool isDark) {
-    return GestureDetector(
-      onTap: () {
-        controller.createNewChat();
-        controller.textController.text = text;
-        controller.inputText.value = text;
-        controller.sendMessage();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: const BoxConstraints(maxWidth: 200),
-        decoration: BoxDecoration(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.06)
-              : Colors.black.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _sep(context)),
-        ),
-        child: Text(text,
-            style: GoogleFonts.inter(
-                fontSize: 13,
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.8)
-                    : Colors.black.withValues(alpha: 0.7),
-                fontWeight: FontWeight.w400,
-                height: 1.3)),
-      ),
-    );
-  }
+  Widget _emptyState(BuildContext context, bool isDark) =>
+      const HomeEmptyState();
 
   // ── Streaming Bubble ──
   Widget _streamBubble(BuildContext context, String text, bool isDark) {
@@ -435,62 +472,63 @@ class ChatView extends GetView<ChatController> {
     final answer = parts.answer.trimLeft();
     final hasText = parts.hasThought || _hasPrintable(answer);
 
+    // Matches ChatBubble's assistant layout: full-width text, no bubble.
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Container(
-          constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.78),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: _aiBubble(context),
-            borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-                bottomRight: Radius.circular(20),
-                bottomLeft: Radius.circular(6)),
-          ),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (isImageGen)
-              _ImageGenIndicator(controller: controller, isDark: isDark)
-            else if (!hasText)
-              _typingHint(context, isDark, attachmentType: attType)
-            else ...[
-              if (parts.hasThought)
-                ThoughtDisclosure(
-                    thought: parts.thought,
-                    isThinking: parts.isThinking,
-                    styleSheet: _thoughtMd(context, isDark)),
-              if (_hasPrintable(answer))
-                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Expanded(
-                      child: MarkdownBody(
-                          data: answer,
-                          selectable: true,
-                          styleSheet: _streamMd(context, isDark))),
-                  _BlinkingCursor(color: Theme.of(context).hintColor),
-                ]),
-            ],
-            if (hasText && !isImageGen)
-              Obx(() {
-                final inf = Get.find<InferenceService>();
-                if (inf.tokensPerSecond.value <= 0) {
-                  return const SizedBox.shrink();
-                }
-                return Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                        '${inf.tokensPerSecond.value.toStringAsFixed(1)} tok/s',
-                        style: GoogleFonts.inter(
-                            fontSize: 10,
-                            color: _appleBlue(context),
-                            fontWeight: FontWeight.w500)));
-              }),
-          ]),
-        ),
-      ),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (isImageGen)
+          Container(
+            constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.82),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _aiBubble(context),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: _ImageGenIndicator(controller: controller, isDark: isDark),
+          )
+        else if (!hasText)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: _typingHint(context, isDark, attachmentType: attType),
+          )
+        else ...[
+          if (parts.hasThought)
+            ThoughtDisclosure(
+                thought: parts.thought,
+                isThinking: parts.isThinking,
+                styleSheet: _thoughtMd(context, isDark)),
+          if (_hasPrintable(answer))
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Expanded(
+                  child: MarkdownBody(
+                      data: answer,
+                      selectable: true,
+                      styleSheet: _streamMd(context, isDark))),
+              _BlinkingCursor(color: Theme.of(context).hintColor),
+            ]),
+        ],
+        if (hasText && !isImageGen)
+          Obx(() {
+            final inf = Get.find<InferenceService>();
+            if (inf.tokensPerSecond.value <= 0) {
+              return const SizedBox(height: 28);
+            }
+            return SizedBox(
+              height: 28,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                    '${inf.tokensPerSecond.value.toStringAsFixed(1)} tok/s',
+                    style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color:
+                            Theme.of(context).hintColor.withValues(alpha: 0.8),
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+              ),
+            );
+          }),
+      ]),
     );
   }
 
@@ -517,11 +555,8 @@ class ChatView extends GetView<ChatController> {
   // ── Input Bar ──
   Widget _inputBar(BuildContext context, bool isDark) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.black : Colors.white,
-        border: Border(top: BorderSide(color: _sep(context), width: 0.5)),
-      ),
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      color: isDark ? Colors.black : Colors.white,
       child: SafeArea(
           top: false,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -770,327 +805,272 @@ class ChatView extends GetView<ChatController> {
                 ),
               );
             }),
-            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              // Attach button (image + file) — shown for cloud & local vision
-              Obx(() {
-                final s = Get.find<SettingsController>();
-                final inf = Get.find<InferenceService>();
-                final isCloud = s.inferenceMode.value == 'cloud';
-                final isLocalVision = s.inferenceMode.value == 'local' &&
-                    inf.loadedModelRuntime.value == 'litert' &&
-                    inf.isVisionLoaded.value;
-                if (!isCloud && !isLocalVision) return const SizedBox.shrink();
-                return _AttachButton(
-                  isDark: isDark,
-                  isCloud: isCloud,
-                  onImage: controller.pickImage,
-                  onFile: controller.pickFile,
-                  context: context,
-                );
-              }),
-              // Text field
-              Expanded(
-                  child: Container(
+            // Composer: one rounded surface holding the field and its actions.
+            Container(
+                padding: const EdgeInsets.all(5),
                 decoration: BoxDecoration(
                   color: isDark
-                      ? const Color(0xFF1C1C1E)
-                      : const Color(0xFFF2F2F7),
-                  borderRadius: BorderRadius.circular(22),
+                      ? const Color(0xFF141416)
+                      : const Color(0xFFF5F5F7),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.09)
+                          : Colors.black.withValues(alpha: 0.07),
+                      width: 0.5),
                 ),
-                child: TextField(
-                  controller: controller.textController,
-                  onChanged: (v) => controller.inputText.value = v,
-                  maxLines: 5,
-                  minLines: 1,
-                  style: GoogleFonts.inter(
-                      fontSize: 15,
-                      color: isDark ? Colors.white : Colors.black),
-                  decoration: InputDecoration(
-                    hintText: 'Message…',
-                    hintStyle: GoogleFonts.inter(
-                        fontSize: 15, color: Theme.of(context).hintColor),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 10),
-                    isDense: true,
-                  ),
-                  onSubmitted: (_) => controller.sendMessage(),
-                ),
-              )),
-              const SizedBox(width: 6),
-              // Batch add button
-              Obx(() {
-                final settings = Get.find<SettingsController>();
-                final localImage = Get.find<LocalImageService>();
-                if (settings.inferenceMode.value == 'local' &&
-                    localImage.isModelLoaded.value &&
-                    localImage.currentBackend.value == Backend.metal) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: GestureDetector(
-                      onLongPress: () {
-                        // Testing mode: Populate batch with 15 fresh alternative prompts
-                        final testPrompts = [
-                          "Portrait of a goth girl with dark makeup, realistic photography, 8k",
-                          "Realistic photo of an elf girl in a forest, cinematic lighting",
-                          "A fluffy orange cat sleeping on a sunny couch, photorealistic",
-                          "A handsome man in a sharp suit, realistic portrait, studio lighting",
-                          "A futuristic city street at night, realistic photography",
-                          "A beautiful young woman with freckles, natural sunlight",
-                          "A majestic lion resting in the savanna, highly detailed",
-                          "An old man with a weathered face, realistic portrait, high detail",
-                          "A delicious looking cup of coffee on a wooden table, macro photography",
-                          "A medieval knight holding a sword, realistic cinematic lighting",
-                          "A golden retriever playing fetch, sharp focus, photography",
-                          "A realistic cyberpunk character with neon reflections",
-                          "A vintage muscle car driving down a desert highway, photorealistic",
-                          "A serene mountain lake at sunrise, realistic landscape photography",
-                          "A close-up of a beautiful eye with detailed iris, macro shot"
-                        ];
-                        // Shuffle them before adding
-                        testPrompts.shuffle();
-                        controller.batchPrompts.clear();
-                        controller.batchPrompts.addAll(testPrompts);
-                        Get.snackbar(
-                            'Test Mode', 'Added 15 test prompts to the batch.',
-                            backgroundColor:
-                                const Color(0xFF34C759).withValues(alpha: 0.9),
-                            colorText: Colors.white);
-                      },
-                      onTap: () async {
-                        final text = controller.textController.text.trim();
-                        if (text.isEmpty) return;
-                        if (controller.batchPrompts.length >= 20) {
-                          Get.snackbar('Batch Limit',
-                              'You can only add up to 20 prompts per batch.');
-                          return;
-                        }
-                        if (!controller.batchModeAccepted.value) {
-                          final accepted = await Get.dialog<bool>(
-                            AlertDialog(
-                              backgroundColor: isDark
-                                  ? const Color(0xFF1C1C1E)
-                                  : Colors.white,
-                              title: Text('Batch Generation',
-                                  style: GoogleFonts.inter(
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark
-                                          ? Colors.white
-                                          : Colors.black)),
-                              content: Text(
-                                  'Generating multiple images back-to-back is demanding. Your device may become warm and use more battery.',
-                                  style: GoogleFonts.inter(
-                                      color: isDark
-                                          ? Colors.white70
-                                          : Colors.black87)),
-                              actions: [
-                                TextButton(
-                                    onPressed: () => Get.back(result: false),
-                                    child: const Text('Cancel')),
-                                FilledButton(
-                                    onPressed: () => Get.back(result: true),
-                                    style: FilledButton.styleFrom(
-                                        backgroundColor: _appleBlue(context)),
-                                    child: const Text('Continue')),
-                              ],
+                child:
+                    Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  // Attach button (image + file) — shown for cloud & local vision
+                  Obx(() {
+                    final s = Get.find<SettingsController>();
+                    final inf = Get.find<InferenceService>();
+                    final isCloud = s.inferenceMode.value == 'cloud';
+                    // LiteRT vision models or GGUF models with a vision
+                    // projector can take photos.
+                    final isLocalVision = s.inferenceMode.value == 'local' &&
+                        inf.isVisionLoaded.value;
+                    // Audio files only work with cloud and LiteRT models.
+                    final audioOk = isCloud ||
+                        (isLocalVision &&
+                            inf.loadedModelRuntime.value == 'litert');
+                    // Any local text model can read documents: their text is
+                    // extracted and inlined into the prompt.
+                    final isLocalText = s.inferenceMode.value == 'local' &&
+                        inf.isModelLoaded.value;
+                    if (!isCloud && !isLocalText) {
+                      return const SizedBox.shrink();
+                    }
+                    final mediaOk = isCloud || isLocalVision;
+                    return _AttachButton(
+                      isDark: isDark,
+                      isCloud: isCloud,
+                      allowMedia: mediaOk,
+                      onCamera: () =>
+                          controller.pickImage(source: ImageSource.camera),
+                      onImage: controller.pickImage,
+                      onFile: () =>
+                          controller.pickFile(documentsOnly: !audioOk),
+                      context: context,
+                    );
+                  }),
+                  // Text field
+                  // Same 40px base height as the buttons so a single line sits
+                  // centred; taller multi-line input keeps buttons at the bottom.
+                  Expanded(child: Obx(() {
+                    // Local mode with nothing loaded: the field is disabled
+                    // and tapping it goes to Models. Cloud mode is unaffected.
+                    final noModel = _localModelMissing();
+                    final loadingModel =
+                        Get.find<InferenceService>().isLoadingModel.value ||
+                            Get.find<LocalImageService>().isLoadingModel.value;
+                    return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: noModel && !loadingModel
+                            ? () => Get.find<HomeController>().changeTab(1)
+                            : null,
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: 40),
+                          alignment: Alignment.centerLeft,
+                          child: TextField(
+                            enabled: !noModel,
+                            controller: controller.textController,
+                            focusNode: controller.inputFocus,
+                            textCapitalization: TextCapitalization.sentences,
+                            onChanged: (v) => controller.inputText.value = v,
+                            maxLines: 5,
+                            minLines: 1,
+                            style: GoogleFonts.inter(
+                                fontSize: 15,
+                                color: isDark ? Colors.white : Colors.black),
+                            decoration: InputDecoration(
+                              hintText: !noModel
+                                  ? 'Ask anything'
+                                  : loadingModel
+                                      ? 'Loading model…'
+                                      : 'Load a model to start chatting',
+                              hintStyle: GoogleFonts.inter(
+                                  fontSize: 15,
+                                  color: Theme.of(context).hintColor),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              disabledBorder: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              isDense: true,
+                              filled: false,
                             ),
-                          );
-                          if (accepted != true) return;
-                          controller.acceptBatchMode();
-                        }
-                        controller.batchPrompts.add(text);
-                        controller.textController.clear();
-                        controller.inputText.value = '';
-                      },
-                      child: Container(
+                            onSubmitted: (_) => controller.sendMessage(),
+                          ),
+                        ));
+                  })),
+                  const SizedBox(width: 6),
+                  // Batch add button
+                  Obx(() {
+                    final settings = Get.find<SettingsController>();
+                    final localImage = Get.find<LocalImageService>();
+                    if (settings.inferenceMode.value == 'local' &&
+                        localImage.isModelLoaded.value &&
+                        localImage.currentBackend.value == Backend.metal) {
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: GestureDetector(
+                          onLongPress: () {
+                            // Testing mode: Populate batch with 15 fresh alternative prompts
+                            final testPrompts = [
+                              "Portrait of a goth girl with dark makeup, realistic photography, 8k",
+                              "Realistic photo of an elf girl in a forest, cinematic lighting",
+                              "A fluffy orange cat sleeping on a sunny couch, photorealistic",
+                              "A handsome man in a sharp suit, realistic portrait, studio lighting",
+                              "A futuristic city street at night, realistic photography",
+                              "A beautiful young woman with freckles, natural sunlight",
+                              "A majestic lion resting in the savanna, highly detailed",
+                              "An old man with a weathered face, realistic portrait, high detail",
+                              "A delicious looking cup of coffee on a wooden table, macro photography",
+                              "A medieval knight holding a sword, realistic cinematic lighting",
+                              "A golden retriever playing fetch, sharp focus, photography",
+                              "A realistic cyberpunk character with neon reflections",
+                              "A vintage muscle car driving down a desert highway, photorealistic",
+                              "A serene mountain lake at sunrise, realistic landscape photography",
+                              "A close-up of a beautiful eye with detailed iris, macro shot"
+                            ];
+                            // Shuffle them before adding
+                            testPrompts.shuffle();
+                            controller.batchPrompts.clear();
+                            controller.batchPrompts.addAll(testPrompts);
+                            showToast('Test mode',
+                                'Added 15 test prompts to the batch.',
+                                tone: ToastTone.success);
+                          },
+                          onTap: () async {
+                            final text = controller.textController.text.trim();
+                            if (text.isEmpty) return;
+                            if (controller.batchPrompts.length >= 20) {
+                              showToast('Batch limit',
+                                  'You can add up to 20 prompts per batch.',
+                                  tone: ToastTone.warning);
+                              return;
+                            }
+                            if (!controller.batchModeAccepted.value) {
+                              final accepted = await confirmSheet(
+                                context,
+                                title: 'Batch generation',
+                                message:
+                                    'Generating multiple images back-to-back is demanding. Your device may get warm and use more battery.',
+                                confirmLabel: 'Continue',
+                              );
+                              if (!accepted) return;
+                              controller.acceptBatchMode();
+                            }
+                            controller.batchPrompts.add(text);
+                            controller.textController.clear();
+                            controller.inputText.value = '';
+                          },
+                          child: Container(
+                            // 3px margins → 40px row height, matching the field.
+                            margin: const EdgeInsets.symmetric(vertical: 3),
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              color:
+                                  _appleBlue(context).withValues(alpha: 0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.add_rounded,
+                                size: 22, color: _appleBlue(context)),
+                          ),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  }),
+                  // Unified mic / send / stop button
+                  Obx(() {
+                    final loading = controller.isLoading.value;
+                    final listening = controller.isListening.value;
+                    final noModel = _localModelMissing();
+                    final hasContent = controller.inputText.value.isNotEmpty ||
+                        controller.selectedFileName.value != null ||
+                        controller.selectedImagePath.value != null;
+
+                    // Determine state
+                    final Color bgColor;
+                    final IconData iconData;
+                    final VoidCallback? onTap;
+
+                    if (loading) {
+                      // AI generating → solid neutral stop
+                      bgColor = isDark ? Colors.white : Colors.black;
+                      iconData = Icons.stop_rounded;
+                      onTap = controller.stopGenerating;
+                    } else if (listening) {
+                      // STT active → red stop
+                      bgColor = const Color(0xFFFF3B30);
+                      iconData = Icons.stop_rounded;
+                      onTap = controller.toggleListening;
+                    } else if (noModel) {
+                      // Nothing to talk to: inert, faded mic
+                      bgColor = Colors.transparent;
+                      iconData = Icons.mic_none_rounded;
+                      onTap = null;
+                    } else if (hasContent) {
+                      // Has text or attachment → blue send
+                      bgColor = _appleBlue(context);
+                      iconData = Icons.arrow_upward_rounded;
+                      onTap = controller.sendMessage;
+                    } else {
+                      // Empty → bare mic glyph
+                      bgColor = Colors.transparent;
+                      iconData = Icons.mic_none_rounded;
+                      onTap = controller.toggleListening;
+                    }
+
+                    return GestureDetector(
+                      onTap: onTap,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        margin: const EdgeInsets.symmetric(vertical: 3),
                         width: 34,
                         height: 34,
                         decoration: BoxDecoration(
-                          color: _appleBlue(context).withValues(alpha: 0.15),
-                          shape: BoxShape.circle,
+                            color: bgColor, shape: BoxShape.circle),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          transitionBuilder: (child, anim) =>
+                              ScaleTransition(scale: anim, child: child),
+                          child: Icon(iconData,
+                              key: ValueKey(iconData),
+                              color: loading
+                                  ? (isDark ? Colors.black : Colors.white)
+                                  : (listening || (hasContent && !noModel))
+                                      ? Colors.white
+                                      : Theme.of(context)
+                                          .hintColor
+                                          .withValues(alpha: noModel ? 0.4 : 1),
+                              size: 20),
                         ),
-                        child: Icon(Icons.add_rounded,
-                            size: 22, color: _appleBlue(context)),
                       ),
-                    ),
-                  );
-                }
-                return const SizedBox.shrink();
-              }),
-              // Unified mic / send / stop button
-              Obx(() {
-                final loading = controller.isLoading.value;
-                final listening = controller.isListening.value;
-                final hasContent = controller.inputText.value.isNotEmpty ||
-                    controller.selectedFileName.value != null ||
-                    controller.selectedImagePath.value != null;
-
-                // Determine state
-                final Color bgColor;
-                final IconData iconData;
-                final VoidCallback? onTap;
-
-                if (loading) {
-                  // AI generating → red stop
-                  bgColor = const Color(0xFFFF3B30);
-                  iconData = Icons.stop_rounded;
-                  onTap = controller.stopGenerating;
-                } else if (listening) {
-                  // STT active → red stop
-                  bgColor = const Color(0xFFFF3B30);
-                  iconData = Icons.stop_rounded;
-                  onTap = controller.toggleListening;
-                } else if (hasContent) {
-                  // Has text or attachment → blue send
-                  bgColor = _appleBlue(context);
-                  iconData = Icons.arrow_upward_rounded;
-                  onTap = controller.sendMessage;
-                } else {
-                  // Empty → grey mic
-                  bgColor = isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.black.withValues(alpha: 0.06);
-                  iconData = Icons.mic_none_rounded;
-                  onTap = controller.toggleListening;
-                }
-
-                return GestureDetector(
-                  onTap: onTap,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeInOut,
-                    width: 34,
-                    height: 34,
-                    decoration:
-                        BoxDecoration(color: bgColor, shape: BoxShape.circle),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 180),
-                      transitionBuilder: (child, anim) =>
-                          ScaleTransition(scale: anim, child: child),
-                      child: Icon(iconData,
-                          key: ValueKey(iconData),
-                          color: (loading || listening || hasContent)
-                              ? Colors.white
-                              : Theme.of(context).hintColor,
-                          size: iconData == Icons.mic_none_rounded ? 18 : 20),
-                    ),
-                  ),
-                );
-              }),
-            ]),
+                    );
+                  }),
+                ])),
           ])),
     );
   }
 
-  // ── Chat History ──
-  void _showHistory(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => Container(
-        constraints:
-            BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 36,
-              height: 5,
-              decoration: BoxDecoration(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.2)
-                      : Colors.black.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(3))),
-          Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Conversations',
-                  style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: isDark ? Colors.white : Colors.black))),
-          Divider(height: 0.5, color: _sep(context)),
-          Flexible(child: Obx(() {
-            if (controller.sessions.isEmpty) {
-              return Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Text('No conversations yet',
-                      style: GoogleFonts.inter(
-                          color: Theme.of(context).hintColor)));
-            }
-            return ListView.separated(
-              shrinkWrap: true,
-              itemCount: controller.sessions.length,
-              separatorBuilder: (_, __) =>
-                  Divider(height: 0.5, indent: 56, color: _sep(context)),
-              itemBuilder: (ctx, i) {
-                final s = controller.sessions[i];
-                final active = controller.currentSessionId.value == s.id;
-                return ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-                  leading: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                          color: active
-                              ? _appleBlue(ctx).withValues(alpha: 0.12)
-                              : (isDark
-                                  ? Colors.white.withValues(alpha: 0.06)
-                                  : Colors.black.withValues(alpha: 0.04)),
-                          borderRadius: BorderRadius.circular(10)),
-                      child: Icon(
-                          active
-                              ? Icons.chat_bubble_rounded
-                              : Icons.chat_bubble_outline_rounded,
-                          size: 16,
-                          color: active
-                              ? _appleBlue(ctx)
-                              : Theme.of(ctx).hintColor)),
-                  title: Text(s.title,
-                      style: GoogleFonts.inter(
-                          fontSize: 15,
-                          fontWeight:
-                              active ? FontWeight.w600 : FontWeight.w400,
-                          color: isDark ? Colors.white : Colors.black),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  subtitle: Text(_fmtDate(s.updatedAt),
-                      style: GoogleFonts.inter(
-                          fontSize: 12, color: Theme.of(ctx).hintColor)),
-                  trailing: IconButton(
-                      icon: Icon(Icons.delete_outline_rounded,
-                          size: 18, color: Theme.of(ctx).hintColor),
-                      onPressed: () => controller.deleteChat(s.id)),
-                  onTap: () {
-                    controller.openChat(s.id);
-                    Navigator.pop(ctx);
-                  },
-                );
-              },
-            );
-          })),
-        ]),
-      ),
-    );
+  /// Local mode with no text or image model loaded (cloud never counts).
+  bool _localModelMissing() {
+    if (Get.find<SettingsController>().inferenceMode.value != 'local') {
+      return false;
+    }
+    return !Get.find<InferenceService>().isModelLoaded.value &&
+        !Get.find<LocalImageService>().isModelLoaded.value;
   }
 
   // ── Markdown styles ──
-  MarkdownStyleSheet _streamMd(BuildContext c, bool isDark) {
-    final clr = Theme.of(c).colorScheme.onSurface;
-    final base = GoogleFonts.inter(fontSize: 15, color: clr, height: 1.5);
-    final codeBg = isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA);
-    return MarkdownStyleSheet.fromTheme(Theme.of(c)).copyWith(
-        p: base,
-        strong: base.copyWith(fontWeight: FontWeight.w600),
-        em: base.copyWith(fontStyle: FontStyle.italic),
-        listBullet: base,
-        code: GoogleFonts.firaCode(
-            fontSize: 13, color: clr, backgroundColor: codeBg),
-        codeblockDecoration: BoxDecoration(
-            color: codeBg, borderRadius: BorderRadius.circular(12)));
-  }
+  MarkdownStyleSheet _streamMd(BuildContext c, bool isDark) =>
+      ChatBubble.answerStyle(c);
 
   MarkdownStyleSheet _thoughtMd(BuildContext c, bool isDark) {
     final muted = Theme.of(c).hintColor;
@@ -1132,15 +1112,6 @@ class ChatView extends GetView<ChatController> {
     return false;
   }
 
-  String _fmtDate(DateTime d) {
-    final diff = DateTime.now().difference(d);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${d.day}/${d.month}/${d.year}';
-  }
-
   String _fmtK(int v) => v >= 1000000
       ? '${(v / 1000000).toStringAsFixed(1)}M'
       : v >= 1000
@@ -1152,6 +1123,10 @@ class ChatView extends GetView<ChatController> {
 class _AttachButton extends StatelessWidget {
   final bool isDark;
   final bool isCloud;
+
+  /// Photos/camera need a vision-capable model; documents work everywhere.
+  final bool allowMedia;
+  final VoidCallback onCamera;
   final VoidCallback onImage;
   final VoidCallback onFile;
   final BuildContext context;
@@ -1159,6 +1134,8 @@ class _AttachButton extends StatelessWidget {
   const _AttachButton({
     required this.isDark,
     required this.isCloud,
+    required this.allowMedia,
+    required this.onCamera,
     required this.onImage,
     required this.onFile,
     required this.context,
@@ -1169,87 +1146,150 @@ class _AttachButton extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 2),
       child: GestureDetector(
-        onTap: () => _showSheet(buildContext),
-        child: Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.black.withValues(alpha: 0.06),
-            shape: BoxShape.circle,
-          ),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _showMenu(buildContext),
+        child: SizedBox(
+          width: 36,
+          height: 40,
           child: Icon(Icons.add_rounded,
-              color: Theme.of(buildContext).hintColor, size: 20),
+              color: Theme.of(buildContext)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.7),
+              size: 24),
         ),
       ),
     );
   }
 
-  void _showSheet(BuildContext ctx) {
-    final isDarkSheet = Theme.of(ctx).brightness == Brightness.dark;
-    showModalBottomSheet(
+  /// Popover anchored above the + button, growing out of it.
+  void _showMenu(BuildContext ctx) {
+    Haptics.selectionClick();
+    FocusManager.instance.primaryFocus?.unfocus();
+    final box = ctx.findRenderObject() as RenderBox;
+    final origin = box.localToGlobal(Offset.zero);
+    final screen = MediaQuery.of(ctx).size;
+    final dark = Theme.of(ctx).brightness == Brightness.dark;
+
+    final items = [
+      (
+        icon: Icons.photo_camera_outlined,
+        label: 'Camera',
+        enabled: allowMedia,
+        onTap: onCamera,
+      ),
+      (
+        icon: Icons.photo_outlined,
+        label: 'Photos',
+        enabled: allowMedia,
+        onTap: onImage,
+      ),
+      (
+        icon: Icons.attach_file_rounded,
+        label: 'Files',
+        enabled: true,
+        onTap: onFile,
+      ),
+    ];
+
+    showGeneralDialog(
       context: ctx,
-      backgroundColor: isDarkSheet ? const Color(0xFF1C1C1E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              // Handle
-              Container(
-                width: 36,
-                height: 4,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black.withValues(alpha: dark ? 0.35 : 0.12),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogCtx, _, __) {
+        final fg = dark ? Colors.white : const Color(0xFF0B0B0C);
+        final muted = dark ? const Color(0xFF8E8E93) : const Color(0xFF6E6E73);
+        return Stack(children: [
+          Positioned(
+            left: origin.dx - 6,
+            bottom: screen.height - origin.dy + 10,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: 236,
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 decoration: BoxDecoration(
-                    color: isDarkSheet
-                        ? Colors.white.withValues(alpha: 0.2)
-                        : Colors.black.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(2)),
+                  color: dark ? const Color(0xFF242427) : Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                      color: dark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.06),
+                      width: 0.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: dark ? 0.5 : 0.12),
+                      blurRadius: 32,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  for (final it in items)
+                    Opacity(
+                      opacity: it.enabled ? 1 : 0.4,
+                      child: InkWell(
+                        onTap: it.enabled
+                            ? () {
+                                Navigator.pop(dialogCtx);
+                                it.onTap();
+                              }
+                            : null,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          child: Row(children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: dark
+                                    ? Colors.white.withValues(alpha: 0.08)
+                                    : Colors.black.withValues(alpha: 0.05),
+                              ),
+                              child: Icon(it.icon, size: 21, color: fg),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(it.label,
+                                        style: GoogleFonts.inter(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w500,
+                                            letterSpacing: -0.2,
+                                            color: fg)),
+                                    if (!it.enabled)
+                                      Text('Needs a vision model',
+                                          style: GoogleFonts.inter(
+                                              fontSize: 12, color: muted)),
+                                  ]),
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ),
+                ]),
               ),
-              const SizedBox(height: 16),
-              Text('Add Attachment',
-                  style: GoogleFonts.inter(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: isDarkSheet ? Colors.white : Colors.black)),
-              if (isCloud)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text('Cloud models support images & text files',
-                      style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color:
-                              isDarkSheet ? Colors.white54 : Colors.black45)),
-                ),
-              const SizedBox(height: 20),
-              Row(children: [
-                _SheetTile(
-                  icon: Icons.photo_library_rounded,
-                  color: const Color(0xFF30D158),
-                  label: 'Photo',
-                  sub: 'From gallery',
-                  isDark: isDarkSheet,
-                  onTap: () {
-                    Navigator.pop(_);
-                    onImage();
-                  },
-                ),
-                const SizedBox(width: 12),
-                _SheetTile(
-                  icon: Icons.attach_file_rounded,
-                  color: const Color(0xFF0A84FF),
-                  label: 'File',
-                  sub: isCloud ? 'PDF, DOCX, text…' : 'PDF, DOCX, text…',
-                  isDark: isDarkSheet,
-                  onTap: () {
-                    Navigator.pop(_);
-                    onFile();
-                  },
-                ),
-              ]),
-            ]),
+            ),
+          ),
+        ]);
+      },
+      transitionBuilder: (_, anim, __, child) {
+        final curved =
+            CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween(begin: 0.92, end: 1.0).animate(curved),
+            alignment: Alignment(-1 + 2 * (origin.dx / screen.width),
+                -1 + 2 * (origin.dy / screen.height)),
+            child: child,
           ),
         );
       },
@@ -1257,74 +1297,6 @@ class _AttachButton extends StatelessWidget {
   }
 }
 
-class _SheetTile extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String sub;
-  final bool isDark;
-  final VoidCallback onTap;
-
-  const _SheetTile({
-    required this.icon,
-    required this.color,
-    required this.label,
-    required this.sub,
-    required this.isDark,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-          decoration: BoxDecoration(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.06)
-                : Colors.black.withValues(alpha: 0.04),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.black.withValues(alpha: 0.08),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              const SizedBox(height: 10),
-              Text(label,
-                  style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? Colors.white : Colors.black)),
-              const SizedBox(height: 2),
-              Text(sub,
-                  style: GoogleFonts.inter(
-                      fontSize: 11,
-                      color: isDark ? Colors.white54 : Colors.black45)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Pulsing Dot (STT indicator) ──
 class _PulsingDot extends StatefulWidget {
   const _PulsingDot();
 

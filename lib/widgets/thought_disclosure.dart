@@ -100,25 +100,23 @@ class _ThoughtDisclosureState extends State<ThoughtDisclosure>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final muted = Theme.of(context).hintColor;
-    final accentColor = isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
+    final accentColor =
+        isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.04)
-            : Colors.black.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(12),
-      ),
+    // Inline disclosure: a quiet "Thought for 6s ›" line; expanded reasoning
+    // sits behind a thin left rule, like a quote.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header
           InkWell(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(8),
             onTap: _toggle,
+            splashFactory: NoSplash.splashFactory,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -169,8 +167,19 @@ class _ThoughtDisclosureState extends State<ThoughtDisclosure>
           SizeTransition(
             sizeFactor: _expandAnimation,
             alignment: AlignmentDirectional.topStart,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Container(
+              margin: const EdgeInsets.only(top: 2, bottom: 6, left: 2),
+              padding: const EdgeInsets.only(left: 12),
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.14)
+                        : Colors.black.withValues(alpha: 0.12),
+                    width: 2,
+                  ),
+                ),
+              ),
               child: MarkdownBody(
                 data: widget.thought.trim(),
                 selectable: true,

@@ -1,9 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../services/download_service.dart';
 import '../services/gguf_metadata.dart';
 import '../services/inference_service.dart';
@@ -13,9 +13,10 @@ import '../services/app_log_service.dart';
 import '../services/device_info_service.dart';
 import '../models/ai_model.dart';
 import '../core/constants.dart';
+import '../core/ui.dart';
 import 'settings_controller.dart';
 
-enum _ModelLoadAction { cancel, unload, continueLoad }
+enum _ModelLoadAction { cancel, unloadAndContinue, continueLoad }
 
 class ModelController extends GetxController {
   final DownloadService _download = Get.find<DownloadService>();
@@ -33,6 +34,10 @@ class ModelController extends GetxController {
 
   final availableModels = <AiModel>[].obs;
   final downloadedFiles = <String>[].obs;
+
+  /// Vision projector (mmproj) files on disk. They're hidden from the model
+  /// list but tell us whether a vision model can read images yet.
+  final visionFiles = <String>{}.obs;
   final isImporting = false.obs;
   final customModels = <AiModel>[].obs;
   final fileSizes = <String, int>{}.obs;
@@ -50,6 +55,9 @@ class ModelController extends GetxController {
     sortSmallestFirst.value = !sortSmallestFirst.value;
   }
 
+  /// Apple Neural Engine (Core ML) models are only usable on Apple devices.
+  static bool get supportsAppleNpu => Platform.isIOS || Platform.isMacOS;
+
   static const localFilters = [
     'downloaded',
     'general',
@@ -60,11 +68,10 @@ class ModelController extends GetxController {
   ];
 
   List<AiModel> get displayedModels {
-    final active = _inference.loadedModelName.value;
+    // Loading a model doesn't move it: the list keeps its normal order and
+    // the loaded model is marked in place.
     final models = [...availableModels];
     models.sort((a, b) {
-      if (a.filename == active) return -1;
-      if (b.filename == active) return 1;
       final aDownloaded = isDownloaded(a.filename);
       final bDownloaded = isDownloaded(b.filename);
       if (aDownloaded != bDownloaded) return aDownloaded ? -1 : 1;
@@ -84,7 +91,7 @@ class ModelController extends GetxController {
   List<AiModel> get filteredDisplayedModels {
     final filter =
         localFilter.value.isEmpty ? defaultLocalFilter : localFilter.value;
-    return displayedModels.where((model) {
+    final filtered = displayedModels.where((model) {
       switch (filter) {
         case 'downloaded':
           return isDownloaded(model.filename);
@@ -101,6 +108,12 @@ class ModelController extends GetxController {
           return isGeneralModel(model);
       }
     }).toList();
+    // The filter's recommended pick goes first; the rest keep their order
+    // (List.sort isn't stable, so partition instead).
+    return [
+      ...filtered.where((m) => m.recommendedFor.contains(filter)),
+      ...filtered.where((m) => !m.recommendedFor.contains(filter)),
+    ];
   }
 
   String get defaultLocalFilter =>
@@ -122,6 +135,8 @@ class ModelController extends GetxController {
     _loadCustomModels();
     availableModels.value = AppConstants.availableModels
         .map((m) => AiModel.fromMap(m))
+        // Core ML (Apple NPU) models only run on iOS/macOS.
+        .where((m) => supportsAppleNpu || !isNpuModel(m))
         .toList()
       ..addAll(customModels);
     refreshDownloaded();
@@ -145,9 +160,12 @@ class ModelController extends GetxController {
 
   Future<void> refreshDownloaded() async {
     await _deletePartialImports();
-    final files = (await _download.getDownloadedModels())
-        .where((file) => !_isAuxiliaryImageFile(file))
-        .toList();
+    final allFiles = await _download.getDownloadedModels();
+    visionFiles
+      ..clear()
+      ..addAll(allFiles.where(_isVisionProjectorFile));
+    final files =
+        allFiles.where((file) => !_isAuxiliaryImageFile(file)).toList();
     downloadedFiles.value = files;
     for (final file in files) {
       fileSizes[file] = await _download.getModelSize(file);
@@ -162,6 +180,20 @@ class ModelController extends GetxController {
     }).toSet();
     for (final file in files) {
       if (!existingFilenames.contains(file)) {
+        // An imported copy of a catalogue vision model (any capitalisation,
+        // e.g. the original Hugging Face name) keeps the catalogue's vision
+        // file, so images work after one in-app download.
+        final known = _catalogVisionMatch(file);
+        if (known != null) {
+          availableModels.add(known.copyWith(
+            filename: file,
+            url: '',
+            size: _formatModelSize(file),
+            description: 'Imported · can read images with its vision file',
+            isImported: true,
+          ));
+          continue;
+        }
         final lower = file.toLowerCase();
         final runtime = AiModel.runtimeFromFilename(file);
         final isLiteRt = runtime == AiModel.runtimeLiteRt;
@@ -192,13 +224,59 @@ class ModelController extends GetxController {
 
   bool isDownloaded(String filename) {
     if (filename.toLowerCase().endsWith('.zip')) {
-      return downloadedFiles.contains(filename.substring(0, filename.length - 4));
+      return downloadedFiles
+          .contains(filename.substring(0, filename.length - 4));
     }
     return downloadedFiles.contains(filename);
   }
 
+  bool _isVisionProjectorFile(String filename) {
+    final lower = filename.toLowerCase();
+    return lower.endsWith('.gguf') && lower.contains('mmproj');
+  }
+
+  /// Catalogue vision model whose file this is, matched case-insensitively
+  /// on our filename or the original download name.
+  AiModel? _catalogVisionMatch(String file) {
+    final lower = file.toLowerCase();
+    for (final m in AppConstants.availableModels) {
+      if ((m['mmproj_filename'] ?? '').isEmpty) continue;
+      final urlName = Uri.tryParse(m['url'] ?? '')?.pathSegments.last ?? '';
+      if ((m['filename'] ?? '').toLowerCase() == lower ||
+          urlName.toLowerCase() == lower) {
+        return AiModel.fromMap(m);
+      }
+    }
+    return null;
+  }
+
+  /// The model's vision file is on disk, so images can be used once loaded.
+  bool isVisionFileReady(AiModel model) =>
+      model.hasVisionProjector && visionFiles.contains(model.mmprojFilename);
+
+  /// Size of a model's vision file from the catalogue ("986 MB"), if known.
+  String visionFileSizeLabel(AiModel model) {
+    for (final m in AppConstants.availableModels) {
+      if (m['mmproj_filename'] != model.mmprojFilename) continue;
+      final match = RegExp(r'\+\s*([\d.]+\s*(?:MB|GB))', caseSensitive: false)
+          .firstMatch(m['size'] ?? '');
+      return match?.group(1) ?? '';
+    }
+    return '';
+  }
+
+  /// Downloads just the vision file for a model that's already on disk.
+  Future<void> downloadVisionFile(AiModel model) async {
+    if (!model.hasVisionProjector || model.mmprojUrl.isEmpty) return;
+    if (isDownloadingModel(model.mmprojFilename)) return;
+    await _downloadVisionFile(model);
+  }
+
   bool _isAuxiliaryImageFile(String filename) {
     final lower = filename.toLowerCase();
+    // GGUF vision projectors ride along with their model; never list or
+    // load them as models of their own.
+    if (lower.endsWith('.gguf') && lower.contains('mmproj')) return true;
     return lower == 'taesd.safetensors' ||
         lower.startsWith('taesd-') ||
         lower.startsWith('taesd_') ||
@@ -214,7 +292,7 @@ class ModelController extends GetxController {
     }
     final expectedBytes = _declaredModelBytes(model);
     if (expectedBytes <= 0) return false;
-    // Relax threshold to 85% to comfortably accommodate HuggingFace decimal-scaled catalog sizes 
+    // Relax threshold to 85% to comfortably accommodate HuggingFace decimal-scaled catalog sizes
     // and rounded metadata sizes (e.g. 770.3MB listed as 0.8GB) while still blocking failed downloads.
     return fileBytes < (expectedBytes * 0.85).round();
   }
@@ -234,12 +312,16 @@ class ModelController extends GetxController {
       _download.activeDownloads.containsKey(filename);
 
   void setLocalFilter(String filter) {
+    if (filter == 'npu' && !supportsAppleNpu) return;
     if (localFilters.contains(filter)) {
       localFilter.value = filter;
     }
   }
 
+  /// Can read images: LiteRT vision models, or GGUF models that come with a
+  /// vision projector (mmproj) file.
   bool isVisionModel(AiModel model) {
+    if (model.hasVisionProjector) return true;
     if (!isLiteRtModel(model)) return false;
     final lower =
         '${model.name} ${model.filename} ${model.description}'.toLowerCase();
@@ -280,7 +362,9 @@ class ModelController extends GetxController {
 
   bool isNpuModel(AiModel model) {
     final lower = model.filename.toLowerCase();
-    return lower.endsWith('.mlmodelc') || lower.endsWith('.mlpackage') || lower.contains('coreml');
+    return lower.endsWith('.mlmodelc') ||
+        lower.endsWith('.mlpackage') ||
+        lower.contains('coreml');
   }
 
   String modelSizeLabel(AiModel model) {
@@ -315,74 +399,22 @@ class ModelController extends GetxController {
     return DownloadService.formatBytes(bytes);
   }
 
-  String filenameFromUrl(String url) {
-    final uri = Uri.tryParse(url);
-    final segment = uri?.pathSegments.isNotEmpty == true
-        ? uri!.pathSegments.last
-        : 'model.gguf';
-    final decoded = Uri.decodeComponent(segment.split('?').first);
-    if (decoded.toLowerCase().endsWith('.gguf') ||
-        decoded.toLowerCase().endsWith('.litertlm') ||
-        decoded.toLowerCase().endsWith('.safetensors')) {
-      return decoded;
-    }
-    return '$decoded.gguf';
-  }
-
-  Future<String> detectUrlSize(String url) async {
-    try {
-      final bytes = await _download.getRemoteFileSize(url);
-      if (bytes <= 0) return 'Unknown size';
-      return DownloadService.formatBytes(bytes);
-    } catch (_) {
-      return 'Unknown size';
-    }
-  }
-
-  Future<void> addModelFromUrl({
-    required String name,
-    required String url,
-    String? filename,
-    String? description,
-    String template = 'chatml',
-    String? size,
-    bool isVision = false,
-  }) async {
-    final resolvedFilename = (filename == null || filename.trim().isEmpty)
-        ? filenameFromUrl(url)
-        : filename.trim();
-
-    final model = AiModel(
-      name: name.trim().isEmpty ? resolvedFilename : name.trim(),
-      filename: resolvedFilename,
-      url: url.trim(),
-      size: size == null || size.trim().isEmpty ? 'Unknown size' : size.trim(),
-      description: description == null || description.trim().isEmpty
-          ? 'Added from custom URL'
-          : description.trim(),
-      template: template.trim().isEmpty ? 'chatml' : template.trim(),
-      runtime: AiModel.runtimeFromFilename(
-        resolvedFilename,
-        template: template.trim().isEmpty ? 'chatml' : template.trim(),
-      ),
-      isVision: isVision &&
-          AiModel.runtimeFromFilename(
-                resolvedFilename,
-                template: template.trim().isEmpty ? 'chatml' : template.trim(),
-              ) ==
-              AiModel.runtimeLiteRt,
-      isCustom: true,
-    );
-
-    customModels.removeWhere((m) => m.filename == model.filename);
-    customModels.add(model);
-    availableModels.removeWhere((m) => m.filename == model.filename);
-    availableModels.add(model);
-    await _saveCustomModels();
-  }
-
   Future<void> downloadModel(AiModel model) async {
+    if (externalDownloadId.value != null &&
+        importFileName.value == model.filename) {
+      showToast('Already downloading',
+          'This model is downloading to your Downloads folder. Wait for it to finish first.',
+          tone: ToastTone.warning);
+      return;
+    }
     try {
+      // Vision models need their projector too; fetch both together.
+      if (model.hasVisionProjector &&
+          model.mmprojUrl.isNotEmpty &&
+          !await _download.isModelDownloaded(model.mmprojFilename) &&
+          !_download.activeDownloads.containsKey(model.mmprojFilename)) {
+        unawaited(_downloadVisionFile(model));
+      }
       await _download.downloadModel(
         url: model.url,
         filename: model.filename,
@@ -390,24 +422,77 @@ class ModelController extends GetxController {
       await refreshDownloaded();
     } catch (e) {
       Get.find<AppLogService>().error('Model download failed', details: e);
-      Get.snackbar('Download Failed', '$e',
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Download Failed', '$e', tone: ToastTone.error);
+    }
+  }
+
+  /// Copies a downloaded model (and its vision file, if any) from app
+  /// storage to the phone's public Downloads folder.
+  Future<void> saveToDownloads(AiModel model) async {
+    final files = [
+      model.filename,
+      if (model.hasVisionProjector && isVisionFileReady(model))
+        model.mmprojFilename,
+    ];
+    final saved = <String>[];
+    for (final name in files) {
+      if (activeDownloads.containsKey('save:$name')) continue;
+      try {
+        final path = await _download.modelPath(name);
+        final result = await _androidImportChannel.invokeMethod<String>(
+            'saveToDownloads', {'path': path, 'name': name});
+        if (result != null) saved.add(result);
+      } on PlatformException catch (e) {
+        Get.find<AppLogService>().error('Save to Downloads failed', details: e);
+        showToast('Not saved', e.message ?? 'Could not save $name.',
+            tone: ToastTone.error);
+        return;
+      }
+    }
+    if (saved.isNotEmpty) {
+      showToast(
+        'Saved to Downloads',
+        saved.length == 1
+            ? '${saved.first} is in your Downloads folder.'
+            : '${saved.length} files (model + vision file) are in your Downloads folder.',
+        tone: ToastTone.success,
+      );
+    }
+  }
+
+  /// Background download of a GGUF vision model's projector file.
+  Future<void> _downloadVisionFile(AiModel model) async {
+    try {
+      await _download.downloadModel(
+          url: model.mmprojUrl, filename: model.mmprojFilename);
+    } catch (e) {
+      Get.find<AppLogService>()
+          .error('Vision file download failed', details: e);
     }
   }
 
   Future<void> downloadModelToDownloads(AiModel model) async {
     if (model.url.trim().isEmpty) {
-      Get.snackbar('Download Unavailable', 'This model has no download URL.',
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Download Unavailable', 'This model has no download URL.',
+          tone: ToastTone.warning);
       return;
     }
 
     if (!Platform.isAndroid) {
-      Get.snackbar(
+      showToast(
         'Android Only',
         'Use the app download button or import a local model on this platform.',
-        snackPosition: SnackPosition.BOTTOM,
+        tone: ToastTone.info,
       );
+      return;
+    }
+
+    // Both downloads report progress under the same filename; running them
+    // together mixes up their progress.
+    if (isDownloadingModel(model.filename)) {
+      showToast('Already downloading',
+          'Wait for the in-app download of this model to finish first.',
+          tone: ToastTone.warning);
       return;
     }
 
@@ -426,10 +511,10 @@ class ModelController extends GetxController {
       );
       externalDownloadId.value = result?['downloadId'] as int?;
       final filename = result?['filename'] as String? ?? model.filename;
-      Get.snackbar(
+      showToast(
         'Download Started',
         '$filename is downloading to your Downloads folder.',
-        snackPosition: SnackPosition.BOTTOM,
+        tone: ToastTone.info,
       );
     } on PlatformException catch (e) {
       isImporting.value = false;
@@ -438,15 +523,13 @@ class ModelController extends GetxController {
         'Download to Downloads failed',
         details: '${e.code}: ${e.message}',
       );
-      Get.snackbar('Download Failed', e.message ?? e.code,
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Download Failed', e.message ?? e.code, tone: ToastTone.error);
     } catch (e) {
       isImporting.value = false;
       externalDownloadId.value = null;
       Get.find<AppLogService>()
           .error('Download to Downloads failed', details: e);
-      Get.snackbar('Download Failed', '$e',
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Download Failed', '$e', tone: ToastTone.error);
     }
   }
 
@@ -454,7 +537,8 @@ class ModelController extends GetxController {
     final id = externalDownloadId.value;
     if (id != null) {
       try {
-        await _androidImportChannel.invokeMethod('cancelDownloadToDownloads', {'downloadId': id});
+        await _androidImportChannel
+            .invokeMethod('cancelDownloadToDownloads', {'downloadId': id});
       } catch (e) {
         Get.find<AppLogService>().error('Cancel download failed', details: e);
       }
@@ -472,7 +556,7 @@ class ModelController extends GetxController {
     _download.pauseDownload(filename);
   }
 
-  /// Removes a user-added model entry (e.g. one added with a wrong URL),
+  /// Removes a custom model entry added from a URL in an earlier version,
   /// cancelling any download and deleting any partial or complete file.
   Future<void> removeCustomModel(AiModel model) async {
     if (_download.activeDownloads.containsKey(model.filename)) {
@@ -483,13 +567,20 @@ class ModelController extends GetxController {
     }
     await _download.deleteModel(model.filename);
     customModels.removeWhere((m) => m.filename == model.filename);
-    availableModels.removeWhere(
-        (m) => m.isCustom && m.filename == model.filename);
+    availableModels
+        .removeWhere((m) => m.isCustom && m.filename == model.filename);
     await _saveCustomModels();
     await refreshDownloaded();
   }
 
   Future<void> deleteModel(String filename) async {
+    final model =
+        availableModels.firstWhereOrNull((m) => m.filename == filename);
+    if (model != null && model.hasVisionProjector) {
+      try {
+        await _download.deleteModel(model.mmprojFilename);
+      } catch (_) {}
+    }
     await _download.deleteModel(filename);
     await refreshDownloaded();
     // Unload if this was the active model
@@ -500,44 +591,36 @@ class ModelController extends GetxController {
 
   Future<void> loadModel(String filename) async {
     if (_inference.isLoadingModel.value) {
-      Get.snackbar('Model Loading', 'Another model is already loading.',
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Model Loading', 'Another model is already loading.',
+          tone: ToastTone.warning);
       return;
     }
     final path = await _download.modelPath(filename);
     final model =
         availableModels.firstWhereOrNull((m) => m.filename == filename);
     if (_isAuxiliaryImageFile(filename)) {
-      Get.snackbar(
+      showToast(
         'Helper File',
-        '$filename is used internally by image generation and cannot be loaded as a model.',
-        snackPosition: SnackPosition.BOTTOM,
+        '$filename is a helper file used by another model and cannot be loaded on its own.',
+        tone: ToastTone.info,
       );
       return;
     }
     final isLiteRt = filename.toLowerCase().endsWith('.litertlm') ||
         model?.runtime == AiModel.runtimeLiteRt;
-    final targetRuntime =
-        model?.runtime ?? AiModel.runtimeFromFilename(filename);
-    if (_inference.requiresAppRestartForRuntime(targetRuntime)) {
-      await _showRuntimeRestartDialog(
-        currentRuntime: _inference.sessionNativeRuntime,
-        targetRuntime: targetRuntime,
-      );
-      return;
-    }
+    // Switching runtimes (LiteRT <-> GGUF) only needs the current engine
+    // unloaded first; the load sheet below offers "Unload & continue".
     final fileBytes = await _modelFileBytes(filename, path, model);
     if (model != null && _isIncompleteCatalogFile(model, fileBytes)) {
       final actual = DownloadService.formatBytes(fileBytes);
       Get.find<AppLogService>().error(
         'Incomplete model file blocked',
-        details:
-            '$filename is $actual, expected about ${model.size}',
+        details: '$filename is $actual, expected about ${model.size}',
       );
-      Get.snackbar(
+      showToast(
         'Incomplete Model File',
         '$filename is only $actual. Delete it and download again.',
-        snackPosition: SnackPosition.BOTTOM,
+        tone: ToastTone.error,
         duration: const Duration(seconds: 6),
       );
       return;
@@ -548,10 +631,10 @@ class ModelController extends GetxController {
         'Corrupt safetensors file blocked',
         details: '$filename failed safetensors header validation',
       );
-      Get.snackbar(
+      showToast(
         'Corrupt Model File',
         '$filename did not download correctly. Delete it and download again.',
-        snackPosition: SnackPosition.BOTTOM,
+        tone: ToastTone.error,
         duration: const Duration(seconds: 6),
       );
       return;
@@ -561,10 +644,10 @@ class ModelController extends GetxController {
         'Corrupt LiteRT model file blocked',
         details: '$filename failed LiteRT file validation; size=$fileBytes',
       );
-      Get.snackbar(
+      showToast(
         'Corrupt Model File',
         '$filename is not a valid LiteRT-LM file. Delete it and download again.',
-        snackPosition: SnackPosition.BOTTOM,
+        tone: ToastTone.error,
         duration: const Duration(seconds: 6),
       );
       return;
@@ -576,9 +659,8 @@ class ModelController extends GetxController {
       isLiteRt: isLiteRt,
     );
     if (loadAction == _ModelLoadAction.cancel) return;
-    if (loadAction == _ModelLoadAction.unload) {
+    if (loadAction == _ModelLoadAction.unloadAndContinue) {
       await unloadModel();
-      return;
     }
     if (isLiteRt && !await _confirmLiteRtGpuWarning()) return;
 
@@ -595,7 +677,8 @@ class ModelController extends GetxController {
       String? taesdPath;
       try {
         const taesdFilename = 'taesd.safetensors';
-        const taesdUrl = 'https://huggingface.co/madebyollin/taesd/resolve/main/diffusion_pytorch_model.safetensors';
+        const taesdUrl =
+            'https://huggingface.co/madebyollin/taesd/resolve/main/diffusion_pytorch_model.safetensors';
         final hasTaesd = await _download.isModelDownloaded(taesdFilename);
         if (!hasTaesd &&
             !_download.activeDownloads.containsKey(taesdFilename)) {
@@ -613,245 +696,62 @@ class ModelController extends GetxController {
           print('[ModelController] TAESD not ready yet, using standard VAE');
         }
       } catch (e) {
-        print('[ModelController] TAESD download failed (will use standard VAE): $e');
+        print(
+            '[ModelController] TAESD download failed (will use standard VAE): $e');
       }
 
-      // Show loading dialog with live logs
-      _showImageModelLoadingDialog(filename);
-      final result = await _localImage.loadModel(path, modelName: filename, taesdPath: taesdPath);
-      // Close loading dialog
-      if (Get.isDialogOpen ?? false) Get.back();
+      // Progress shows inline on the model's card, like text models.
+      final result = await _localImage.loadModel(path,
+          modelName: filename, taesdPath: taesdPath);
 
       final isError = !_localImage.isModelLoaded.value;
-      Get.snackbar(
+      showToast(
         isError ? 'Model Not Loaded' : 'Image Model',
         result,
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: isError
-            ? const Color(0xFFFF9500).withValues(alpha: 0.15)
-            : const Color(0xFF34C759).withValues(alpha: 0.15),
-        colorText: isError ? const Color(0xFFFF9500) : const Color(0xFF34C759),
+        tone: isError ? ToastTone.warning : ToastTone.success,
         duration:
             isError ? const Duration(seconds: 6) : const Duration(seconds: 2),
       );
     } else {
+      // GGUF vision: pass the projector if it's on disk; otherwise fetch it
+      // and load text-only for now.
+      String? mmprojPath;
+      var visionNote = '';
+      if (model != null && model.hasVisionProjector && !isLiteRt) {
+        if (await _download.isModelDownloaded(model.mmprojFilename)) {
+          mmprojPath = await _download.modelPath(model.mmprojFilename);
+        } else {
+          visionNote = ' Vision file is still downloading, so images will '
+              'work after you reload the model.';
+          if (model.mmprojUrl.isNotEmpty &&
+              !_download.activeDownloads.containsKey(model.mmprojFilename)) {
+            unawaited(_downloadVisionFile(model));
+          }
+        }
+      }
       final result = await _inference.loadModel(
         path,
         modelName: filename,
         modelRuntime: model?.runtime,
-        enableLiteRtVision: model == null ? false : isVisionModel(model),
+        enableLiteRtVision: model != null && isLiteRt && isVisionModel(model),
+        mmprojPath: mmprojPath,
       );
       if (_inference.isModelLoaded.value) {
         final fallbackToText = result.toLowerCase().contains('text-only');
-        _inference.isVisionLoaded.value =
-            fallbackToText ? false : (model == null ? false : isVisionModel(model));
+        _inference.isVisionLoaded.value = isLiteRt
+            ? (!fallbackToText && model != null && isVisionModel(model))
+            : _inference.ggufVisionLoaded;
+        if (visionNote.isNotEmpty) {
+          showToast('Model Loaded', '$result$visionNote',
+              tone: ToastTone.info, duration: const Duration(seconds: 5));
+          await _settings.setInferenceMode('local');
+          return;
+        }
         await _settings.setInferenceMode('local');
-        Get.snackbar('Model Loaded', result,
-            snackPosition: SnackPosition.BOTTOM);
+        showToast('Model Loaded', result, tone: ToastTone.success);
       } else {
-        bool showDetails = false;
-        Get.dialog(
-          StatefulBuilder(
-            builder: (context, setState) {
-              final friendlyMsg = _getFriendlyErrorMessage(result);
-              final isDark = Theme.of(context).brightness == Brightness.dark;
-              final detailBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
-              final detailBorder = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
-              
-              return AlertDialog(
-                backgroundColor: Theme.of(context).dialogTheme.backgroundColor,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-                contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-                actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                title: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.error.withValues(alpha: isDark ? 0.15 : 0.08),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.error_outline_rounded,
-                        color: Theme.of(context).colorScheme.error,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Model Load Failed',
-                        style: GoogleFonts.inter(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 18,
-                          color: isDark ? Colors.white : Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                content: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        friendlyMsg,
-                        style: GoogleFonts.inter(
-                          fontSize: 14, 
-                          height: 1.5,
-                          color: isDark ? Colors.white70 : Colors.black87,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        'TROUBLESHOOTING TIPS',
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
-                          letterSpacing: 1.0,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _buildTipRow(context, Icons.delete_outline_rounded, 'Delete the model and try redownloading it completely.'),
-                      _buildTipRow(context, Icons.memory_rounded, 'Ensure your device has at least 2-3 GB of free RAM.'),
-                      if (result.toLowerCase().contains('litert') || filename.toLowerCase().endsWith('.litertlm'))
-                        _buildTipRow(context, Icons.settings_suggest_rounded, 'Double check if this LiteRT-LM file matches your architecture.'),
-                      const SizedBox(height: 12),
-
-                      // Technical Details Toggle Button
-                      InkWell(
-                        onTap: () => setState(() => showDetails = !showDetails),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                showDetails ? 'Hide Technical Details' : 'Show Technical Details',
-                                style: GoogleFonts.inter(
-                                  fontSize: 12, 
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                              Icon(
-                                showDetails ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                                size: 16,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      AnimatedSize(
-                        duration: const Duration(milliseconds: 250),
-                        curve: Curves.easeInOut,
-                        child: showDetails
-                            ? Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 8),
-                                  Container(
-                                    constraints: const BoxConstraints(maxHeight: 180),
-                                    width: double.maxFinite,
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: detailBg,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: detailBorder, width: 1),
-                                    ),
-                                    child: SingleChildScrollView(
-                                      child: SelectableText(
-                                        result,
-                                        style: GoogleFonts.firaCode(
-                                          fontSize: 11,
-                                          height: 1.4,
-                                          color: isDark ? const Color(0xFFFDA4AF) : const Color(0xFF9F1239),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Get.back(),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: Text(
-                      'Close',
-                      style: GoogleFonts.inter(
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
+        _showLoadFailedSheet(filename, result);
       }
-    }
-  }
-
-  Future<void> _showRuntimeRestartDialog({
-    required String currentRuntime,
-    required String targetRuntime,
-  }) async {
-    final currentLabel = _runtimeLabel(currentRuntime);
-    final targetLabel = _runtimeLabel(targetRuntime);
-    await Get.dialog<void>(
-      AlertDialog(
-        title: const Text('Restart required'),
-        content: Text(
-          'You already used $currentLabel in this app session. '
-          'Switching to $targetLabel without restarting can crash the native runtime.\n\n'
-          'Restart the app, then load this model.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Get.back();
-              try {
-                await _androidImportChannel.invokeMethod('restartApp');
-              } catch (_) {
-                SystemNavigator.pop();
-              }
-            },
-            child: const Text('Restart app'),
-          ),
-        ],
-      ),
-      barrierDismissible: false,
-    );
-  }
-
-  String _runtimeLabel(String runtime) {
-    switch (runtime.toLowerCase()) {
-      case AiModel.runtimeLiteRt:
-        return 'LiteRT';
-      case AiModel.runtimeLlama:
-        return 'GGUF';
-      default:
-        return 'local model';
     }
   }
 
@@ -925,7 +825,7 @@ class ModelController extends GetxController {
       }
 
       // Note: We intentionally DO NOT allow standard TFLite models starting with 'TFL3' at offset 4
-      // if they lack the 'LITERTLM' container header, because the native LiteRT-LM engine 
+      // if they lack the 'LITERTLM' container header, because the native LiteRT-LM engine
       // strictly expects the .litertlm conversational bundle structure and will crash with a
       // SIGABRT native assert check failure if it is not present.
       return false;
@@ -944,12 +844,26 @@ class ModelController extends GetxController {
   }) async {
     final availableRamGb = await _refreshAvailableRamGb();
 
-    final availableBytes = (availableRamGb * 1024 * 1024 * 1024).round();
+    // Whatever is loaded now (text or image) gets unloaded first, so count
+    // its memory as free when judging whether the new model fits.
+    final loadedName = _inference.isModelLoaded.value
+        ? _inference.loadedModelName.value
+        : _localImage.isModelLoaded.value
+            ? _localImage.loadedModelName.value
+            : '';
+    final hasLoadedModel = loadedName.isNotEmpty;
+    final isSameModelLoaded = hasLoadedModel && loadedName == filename;
+    final loadedBytes = hasLoadedModel ? (fileSizes[loadedName] ?? 0) : 0;
+
+    final measuredBytes = (availableRamGb * 1024 * 1024 * 1024).round();
+    final availableBytes =
+        measuredBytes > 0 ? measuredBytes + loadedBytes : measuredBytes;
     final modelLabel = fileBytes > 0
         ? DownloadService.formatWholeMb(fileBytes)
         : 'Unknown size';
     final ramLabel = availableBytes > 0
-        ? DownloadService.formatWholeMb(availableBytes)
+        ? '${hasLoadedModel && loadedBytes > 0 ? '~' : ''}'
+            '${DownloadService.formatWholeMb(availableBytes)}'
         : 'Unknown';
     final lower = filename.toLowerCase();
 
@@ -998,84 +912,134 @@ class ModelController extends GetxController {
             : lower.endsWith('.safetensors')
                 ? 'Image model'
                 : 'Local model';
-    final loadedName = _inference.loadedModelName.value;
-    final hasLoadedModel =
-        _inference.isModelLoaded.value && loadedName.isNotEmpty;
-    final isSameModelLoaded = hasLoadedModel && loadedName == filename;
 
-    final result = await Get.dialog<_ModelLoadAction>(
-      AlertDialog(
-        title: Text(isCriticallyLow ? 'Restart recommended' : 'Load model?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final warningSerious = (gguf != null && !fits) ||
+        isCriticallyLow ||
+        isLargeForRam ||
+        isLowRam ||
+        isLiteRt;
+
+    final sheetContext = Get.context;
+    if (sheetContext == null || !sheetContext.mounted) {
+      return _ModelLoadAction.cancel;
+    }
+    final result = await showAppSheet<_ModelLoadAction>(
+      sheetContext,
+      title: isSameModelLoaded
+          ? 'Reload model?'
+          : hasLoadedModel
+              ? 'Switch model?'
+              : isCriticallyLow
+                  ? 'Restart recommended'
+                  : 'Load model?',
+      subtitle: filename,
+      builder: (ctx) {
+        final t = AppTokens.of(ctx);
+        void pop(_ModelLoadAction action) {
+          if (ctx.mounted) Navigator.pop(ctx, action);
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(filename),
-            const SizedBox(height: 12),
-            Text('Runtime: $runtimeLabel'),
-            Text('Available RAM: $ramLabel'),
-            Text('Model size: $modelLabel'),
-            if (gguf != null && estimatedBytes != null)
-              Text(
-                'Estimated memory: '
-                '${DownloadService.formatWholeMb(estimatedBytes)} '
-                '(context ${DownloadService.formatWholeMb(gguf.kvCacheBytes(contextTokens))} '
-                'for $contextTokens tokens)',
-              ),
+            AppGroup(children: [
+              _detailRow(ctx, 'Runtime', runtimeLabel),
+              _detailRow(
+                  ctx,
+                  hasLoadedModel ? 'Available after unload' : 'Available RAM',
+                  ramLabel),
+              _detailRow(ctx, 'Model size', modelLabel),
+              if (gguf != null && estimatedBytes != null)
+                _detailRow(
+                  ctx,
+                  'Estimated memory',
+                  DownloadService.formatWholeMb(estimatedBytes),
+                  note: 'Context '
+                      '${DownloadService.formatWholeMb(gguf.kvCacheBytes(contextTokens))} '
+                      'for $contextTokens tokens',
+                ),
+            ]),
             if (hasLoadedModel) ...[
               const SizedBox(height: 12),
-              Text(
+              AppNotice(
                 isSameModelLoaded
-                    ? 'This model is already loaded.'
-                    : 'Already loaded: $loadedName',
+                    ? 'This model is already loaded. It will be unloaded and '
+                        'loaded again.'
+                    : '$loadedName is loaded. It will be unloaded first.',
+                icon: Icons.memory_rounded,
               ),
-              if (!isSameModelLoaded)
-                const Text('Unload it before loading another model.'),
             ],
             const SizedBox(height: 12),
-            Text(warning),
+            AppNotice(
+              warning,
+              icon: warningSerious
+                  ? Icons.warning_amber_rounded
+                  : Icons.info_outline_rounded,
+              color: warningSerious ? t.orange : null,
+            ),
+            const SizedBox(height: 20),
+            // A model is already loaded: the only choice is to swap it out.
+            if (hasLoadedModel)
+              Row(children: [
+                Expanded(
+                  child: TonalButton.neutral(
+                    ctx,
+                    label: 'Cancel',
+                    onTap: () => pop(_ModelLoadAction.cancel),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: PrimaryButton(
+                    label: 'Unload & continue',
+                    onPressed: () => pop(_ModelLoadAction.unloadAndContinue),
+                  ),
+                ),
+              ])
+            else ...[
+              PrimaryButton(
+                label: 'Continue',
+                onPressed: () async {
+                  await _refreshAvailableRamGb();
+                  pop(_ModelLoadAction.continueLoad);
+                },
+              ),
+              if (fittingContext != null) ...[
+                const SizedBox(height: 10),
+                TonalButton.neutral(
+                  ctx,
+                  label: 'Load with $fittingContext tokens',
+                  onTap: () async {
+                    await _settings.setContextSize(fittingContext);
+                    pop(_ModelLoadAction.continueLoad);
+                  },
+                ),
+              ],
+              if (isCriticallyLow) ...[
+                const SizedBox(height: 10),
+                TonalButton.neutral(
+                  ctx,
+                  label: 'Restart app',
+                  onTap: () async {
+                    pop(_ModelLoadAction.cancel);
+                    try {
+                      await _androidImportChannel.invokeMethod('restartApp');
+                    } catch (_) {
+                      SystemNavigator.pop();
+                    }
+                  },
+                ),
+              ],
+              const SizedBox(height: 10),
+              TonalButton.neutral(
+                ctx,
+                label: 'Cancel',
+                onTap: () => pop(_ModelLoadAction.cancel),
+              ),
+            ],
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(result: _ModelLoadAction.cancel),
-            child: const Text('Cancel'),
-          ),
-          if (hasLoadedModel)
-            TextButton(
-              onPressed: () => Get.back(result: _ModelLoadAction.unload),
-              child: const Text('Unload'),
-            ),
-          if (isCriticallyLow)
-            TextButton(
-              onPressed: () async {
-                Get.back(result: _ModelLoadAction.cancel);
-                try {
-                  await _androidImportChannel.invokeMethod('restartApp');
-                } catch (_) {
-                  SystemNavigator.pop();
-                }
-              },
-              child: const Text('Restart app'),
-            ),
-          if (fittingContext != null)
-            TextButton(
-              onPressed: () async {
-                await _settings.setContextSize(fittingContext);
-                Get.back(result: _ModelLoadAction.continueLoad);
-              },
-              child: Text('Load with $fittingContext tokens'),
-            ),
-          ElevatedButton(
-            onPressed: () async {
-              await _refreshAvailableRamGb();
-              Get.back(result: _ModelLoadAction.continueLoad);
-            },
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-      barrierDismissible: false,
+        );
+      },
     );
     return result ?? _ModelLoadAction.cancel;
   }
@@ -1092,27 +1056,18 @@ class ModelController extends GetxController {
     if (accepted) return true;
 
     final modeLabel = mode == 'gpu_fast' ? 'GPU Fast' : 'Auto Fast';
-    final confirmed = await Get.dialog<bool>(
-      AlertDialog(
-        title: Text('$modeLabel LiteRT speed'),
-        content: const Text(
-          'GPU can make LiteRT models much faster, closer to Edge Gallery speed. '
-          'On some phones GPU/OpenCL can crash the app while loading. '
-          'If that happens, Auto Fast will use CPU on the next load.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(result: false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Get.back(result: true),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-      barrierDismissible: false,
-    );
+    final context = Get.context;
+    final confirmed = context == null
+        ? false
+        : await confirmSheet(
+            context,
+            title: '$modeLabel LiteRT speed',
+            message:
+                'GPU can make LiteRT models much faster, closer to Edge Gallery speed. '
+                'On some phones GPU/OpenCL can crash the app while loading. '
+                'If that happens, Auto Fast will use CPU on the next load.',
+            confirmLabel: 'Continue',
+          );
 
     if (confirmed == true) {
       await _hive.setSetting(AppConstants.keyLiteRtGpuWarningAccepted, true);
@@ -1133,59 +1088,6 @@ class ModelController extends GetxController {
     }
   }
 
-  void _showImageModelLoadingDialog(String filename) {
-    final localImage = Get.find<LocalImageService>();
-    Get.dialog(
-      Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Get.isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 48,
-                height: 48,
-                child: CircularProgressIndicator(strokeWidth: 3),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Loading $filename',
-                style: GoogleFonts.inter(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Obx(() {
-                final log = localImage.latestLog.value;
-                if (log.isEmpty) {
-                  return const Text(
-                    'Initializing model...',
-                    style: TextStyle(fontSize: 13, color: Colors.grey),
-                  );
-                }
-                return Text(
-                  log,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                );
-              }),
-            ],
-          ),
-        ),
-      ),
-      barrierDismissible: false,
-    );
-  }
-
   Future<void> unloadModel() async {
     await _inference.unloadModel();
     await _localImage.unloadModel();
@@ -1193,9 +1095,8 @@ class ModelController extends GetxController {
 
   Future<void> importModelFromStorage() async {
     if (isImporting.value) {
-      Get.snackbar(
-          'Import in Progress', 'Wait for the current import to finish.',
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Import in Progress', 'Wait for the current import to finish.',
+          tone: ToastTone.warning);
       return;
     }
 
@@ -1220,9 +1121,9 @@ class ModelController extends GetxController {
         if (!lower.endsWith('.gguf') &&
             !lower.endsWith('.litertlm') &&
             !lower.endsWith('.safetensors')) {
-          Get.snackbar('Unsupported Model',
+          showToast('Unsupported Model',
               'Only .gguf, .litertlm, and .safetensors files can be imported.',
-              snackPosition: SnackPosition.BOTTOM);
+              tone: ToastTone.warning);
           return;
         }
 
@@ -1233,17 +1134,17 @@ class ModelController extends GetxController {
                 ? 0
                 : await file.length();
         if (totalBytes <= 0) {
-          Get.snackbar('Import Failed', 'The selected file is empty.',
-              snackPosition: SnackPosition.BOTTOM);
+          showToast('Import Failed', 'The selected file is empty.',
+              tone: ToastTone.error);
           return;
         }
 
         final sourceStream = picked.readStream ?? file?.openRead();
         if (sourceStream == null) {
-          Get.snackbar(
+          showToast(
             'Import Failed',
             'Unable to read the selected file. Try selecting it from local storage.',
-            snackPosition: SnackPosition.BOTTOM,
+            tone: ToastTone.error,
           );
           return;
         }
@@ -1283,8 +1184,8 @@ class ModelController extends GetxController {
         await refreshDownloaded();
         localFilter.value = 'downloaded';
         importStatus.value = 'Import complete';
-        Get.snackbar('Import Successful', 'Model $filename imported.',
-            snackPosition: SnackPosition.BOTTOM);
+        showToast('Import Successful', 'Model $filename imported.',
+            tone: ToastTone.success);
       }
     } catch (e) {
       if (partialImportPath != null) {
@@ -1294,7 +1195,7 @@ class ModelController extends GetxController {
         }
       }
       Get.find<AppLogService>().error('Model import failed', details: e);
-      Get.snackbar('Import Failed', '$e', snackPosition: SnackPosition.BOTTOM);
+      showToast('Import Failed', '$e', tone: ToastTone.error);
     } finally {
       isImporting.value = false;
       importFileName.value = '';
@@ -1328,20 +1229,19 @@ class ModelController extends GetxController {
             await _download.getModelSize(filename);
         await refreshDownloaded();
         localFilter.value = 'downloaded';
-        Get.snackbar('Import Successful', 'Model $filename imported.',
-            snackPosition: SnackPosition.BOTTOM);
+        showToast('Import Successful', 'Model $filename imported.',
+            tone: ToastTone.success);
       }
     } on PlatformException catch (e) {
       Get.find<AppLogService>().error(
         'Android model import failed',
         details: '${e.code}: ${e.message}',
       );
-      Get.snackbar('Import Failed', e.message ?? e.code,
-          snackPosition: SnackPosition.BOTTOM);
+      showToast('Import Failed', e.message ?? e.code, tone: ToastTone.error);
     } catch (e) {
       Get.find<AppLogService>()
           .error('Android model import failed', details: e);
-      Get.snackbar('Import Failed', '$e', snackPosition: SnackPosition.BOTTOM);
+      showToast('Import Failed', '$e', tone: ToastTone.error);
     } finally {
       isImporting.value = false;
       importFileName.value = '';
@@ -1380,90 +1280,15 @@ class ModelController extends GetxController {
   }
 
   Future<bool> _confirmReplace(String filename) async {
-    final result = await Get.dialog<bool>(
-      Builder(
-        builder: (context) {
-          final isDark = Theme.of(context).brightness == Brightness.dark;
-          
-          return AlertDialog(
-            backgroundColor: Theme.of(context).dialogTheme.backgroundColor,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-            contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-            actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-            title: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: isDark ? 0.15 : 0.08),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.copy_all_rounded,
-                    color: Theme.of(context).colorScheme.primary,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Model Already Exists',
-                    style: GoogleFonts.inter(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 18,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            content: Text(
-              'A model file named "$filename" is already imported in your local app storage. Would you like to replace it?',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                height: 1.5,
-                color: isDark ? Colors.white70 : Colors.black87,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Get.back(result: false),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                child: Text(
-                  'Cancel',
-                  style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: () => Get.back(result: true),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                ),
-                child: Text(
-                  'Replace File',
-                  style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+    final context = Get.context;
+    if (context == null) return false;
+    return confirmSheet(
+      context,
+      title: 'Model already exists',
+      message:
+          'A model file named "$filename" is already imported in your local app storage. Would you like to replace it?',
+      confirmLabel: 'Replace file',
     );
-    return result ?? false;
   }
 
   /// Removes `.part` files left behind by imports or download finalisation
@@ -1481,10 +1306,18 @@ class ModelController extends GetxController {
         if (isImporting.value) importFileName.value,
       };
       await for (final entity in dir.list()) {
-        if (entity is! File || !entity.path.toLowerCase().endsWith('.part')) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        final lower = name.toLowerCase();
+        // A '.download' partial whose finished file already exists is a
+        // leftover from an interrupted download that was later restarted.
+        if (lower.endsWith('.download')) {
+          final target = name.substring(0, name.length - '.download'.length);
+          if (busy.contains(target)) continue;
+          if (await File('${dir.path}/$target').exists()) await entity.delete();
           continue;
         }
-        final name = entity.uri.pathSegments.last;
+        if (!lower.endsWith('.part')) continue;
         final target = name.substring(0, name.length - '.part'.length);
         if (busy.contains(target)) continue;
         final age = DateTime.now().difference(await entity.lastModified());
@@ -1529,35 +1362,150 @@ class ModelController extends GetxController {
     return 'The native AI engine encountered an unexpected error while loading the model. Please check the technical details below for more information.';
   }
 
+  void _showLoadFailedSheet(String filename, String result) {
+    final friendlyMsg = _getFriendlyErrorMessage(result);
+    final context = Get.context;
+    if (context == null) {
+      showToast('Model load failed', friendlyMsg,
+          tone: ToastTone.error, duration: const Duration(seconds: 6));
+      return;
+    }
+    final showLiteRtTip = result.toLowerCase().contains('litert') ||
+        filename.toLowerCase().endsWith('.litertlm');
+    bool showDetails = false;
+    showAppSheet<void>(
+      context,
+      title: 'Model load failed',
+      subtitle: friendlyMsg,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) {
+          final t = AppTokens.of(ctx);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SectionHeader('Troubleshooting tips',
+                  padding: EdgeInsets.fromLTRB(0, 0, 0, 10)),
+              _buildTipRow(ctx, Icons.delete_outline_rounded,
+                  'Delete the model and try redownloading it completely.'),
+              _buildTipRow(ctx, Icons.memory_rounded,
+                  'Ensure your device has at least 2-3 GB of free RAM.'),
+              if (showLiteRtTip)
+                _buildTipRow(ctx, Icons.tune_rounded,
+                    'Double check if this LiteRT-LM file matches your architecture.'),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: InkWell(
+                  onTap: () => setState(() => showDetails = !showDetails),
+                  borderRadius: BorderRadius.circular(8),
+                  splashFactory: NoSplash.splashFactory,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          showDetails
+                              ? 'Hide technical details'
+                              : 'Show technical details',
+                          style: t.label.copyWith(color: t.text),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          showDetails
+                              ? Icons.keyboard_arrow_up_rounded
+                              : Icons.keyboard_arrow_down_rounded,
+                          size: 18,
+                          color: t.muted,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: showDetails
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Container(
+                          constraints: const BoxConstraints(maxHeight: 180),
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: t.fill,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: SingleChildScrollView(
+                            child: SelectableText(
+                              result,
+                              style:
+                                  t.mono.copyWith(fontSize: 11.5, height: 1.45),
+                            ),
+                          ),
+                        ),
+                      )
+                    : const SizedBox(width: double.infinity),
+              ),
+              const SizedBox(height: 20),
+              TonalButton.neutral(ctx,
+                  label: 'Close', onTap: () => Navigator.pop(ctx)),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildTipRow(BuildContext context, IconData icon, String text) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final t = AppTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10.0),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: isDark ? 0.15 : 0.08),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              icon,
-              size: 16,
-              color: Theme.of(context).colorScheme.primary,
-            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(icon, size: 16, color: t.muted),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               text,
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                height: 1.45,
-                color: isDark ? Colors.white70 : Colors.black87,
-                fontWeight: FontWeight.w400,
-              ),
+              style: t.caption.copyWith(color: t.text.withValues(alpha: 0.85)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Label / value line used in the load-model sheet.
+  Widget _detailRow(BuildContext context, String label, String value,
+      {String? note}) {
+    final t = AppTokens.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: t.body.copyWith(fontSize: 14, color: t.muted)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(value,
+                    textAlign: TextAlign.end,
+                    style: t.body
+                        .copyWith(fontSize: 14, fontWeight: FontWeight.w500)),
+                if (note != null) ...[
+                  const SizedBox(height: 2),
+                  Text(note, textAlign: TextAlign.end, style: t.small),
+                ],
+              ],
             ),
           ),
         ],

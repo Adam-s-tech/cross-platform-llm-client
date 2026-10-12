@@ -6,6 +6,8 @@ import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../core/ui.dart';
+
 class ImageViewer extends StatefulWidget {
   final String base64Image;
 
@@ -46,24 +48,17 @@ class _ImageViewerState extends State<ImageViewer> {
       }
       await Gal.putImageBytes(_bytes);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Image saved to gallery'),
-            duration: Duration(seconds: 2),
-          ),
-        );
+        showToast('Saved', 'Image saved to gallery',
+            tone: ToastTone.success, duration: const Duration(seconds: 2));
       }
     } on GalException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save image: ${e.type.message}')),
-        );
+        showToast('Not saved', 'Failed to save image: ${e.type.message}',
+            tone: ToastTone.error);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving image: $e')),
-        );
+        showToast('Not saved', 'Error saving image: $e', tone: ToastTone.error);
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -83,9 +78,8 @@ class _ImageViewerState extends State<ImageViewer> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sharing image: $e')),
-        );
+        showToast('Not shared', 'Error sharing image: $e',
+            tone: ToastTone.error);
       }
     } finally {
       if (mounted) setState(() => _isSharing = false);
@@ -107,56 +101,38 @@ class _ImageViewerState extends State<ImageViewer> {
               child: Image.memory(
                 _bytes,
                 fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image_rounded, color: Colors.white, size: 64),
+                errorBuilder: (_, __, ___) => Center(
+                  child: Icon(Icons.broken_image_outlined,
+                      color: Colors.white.withValues(alpha: 0.5), size: 48),
                 ),
               ),
             ),
           ),
 
-          // Top close button
+          // Minimal top chrome: close on the left, save / share on the right.
           SafeArea(
             child: Align(
-              alignment: Alignment.topLeft,
+              alignment: Alignment.topCenter,
               child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Material(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  shape: const CircleBorder(),
-                  clipBehavior: Clip.antiAlias,
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Bottom action bar
-          SafeArea(
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: Container(
-                margin: const EdgeInsets.all(16),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(16),
-                ),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _ActionButton(
-                      icon: Icons.download_rounded,
-                      label: 'Download',
+                    _ChromeButton(
+                      icon: Icons.close_rounded,
+                      tooltip: 'Close',
+                      onTap: () => Navigator.of(context).pop(),
+                    ),
+                    const Spacer(),
+                    _ChromeButton(
+                      icon: Icons.file_download_outlined,
+                      tooltip: 'Download',
                       isLoading: _isSaving,
                       onTap: _download,
                     ),
-                    const SizedBox(width: 24),
-                    _ActionButton(
-                      icon: Icons.share_rounded,
-                      label: 'Share',
+                    const SizedBox(width: 10),
+                    _ChromeButton(
+                      icon: Icons.ios_share_rounded,
+                      tooltip: 'Share',
                       isLoading: _isSharing,
                       onTap: _share,
                     ),
@@ -171,52 +147,45 @@ class _ImageViewerState extends State<ImageViewer> {
   }
 }
 
-class _ActionButton extends StatelessWidget {
+/// Small white icon on a subtle dark circle — floats over any image.
+class _ChromeButton extends StatelessWidget {
   final IconData icon;
-  final String label;
+  final String tooltip;
   final bool isLoading;
   final VoidCallback onTap;
 
-  const _ActionButton({
+  const _ChromeButton({
     required this.icon,
-    required this.label,
-    required this.isLoading,
+    required this.tooltip,
     required this.onTap,
+    this.isLoading = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: isLoading ? null : onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (isLoading)
-                const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(Colors.white),
-                  ),
-                )
-              else
-                Icon(icon, color: Colors.white, size: 24),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.12),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: isLoading ? null : onTap,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Center(
+              child: isLoading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(icon, color: Colors.white, size: 21),
+            ),
           ),
         ),
       ),

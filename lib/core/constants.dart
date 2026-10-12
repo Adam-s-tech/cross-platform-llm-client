@@ -43,6 +43,7 @@ class AppConstants {
       'litert_gpu_warning_accepted';
   static const String keyLiteRtGpuLoadPending = 'litert_gpu_load_pending';
   static const String keyLiteRtGpuCrashDetected = 'litert_gpu_crash_detected';
+
   /// Set while a GGUF model runs on the GPU until its first reply succeeds;
   /// still set on the next load means the GPU crashed the app.
   static const String keyGgufGpuPending = 'gguf_gpu_pending';
@@ -52,6 +53,7 @@ class AppConstants {
   static const String keyTemperature = 'temperature';
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';
+  static const String keyHapticsEnabled = 'haptics_enabled';
   static const String keyServerApiKey = 'server_api_key';
   static const String keyServerUseApiKey = 'server_use_api_key';
   static const String keyServerAllowNetwork = 'server_allow_network';
@@ -62,7 +64,8 @@ class AppConstants {
   static const String keyImageGenSize = 'image_gen_size';
   static const String keyImageGenQuantization = 'image_gen_quantization';
   static const String keyFontScale = 'font_scale';
-  static const String keyBatchModeWarningAccepted = 'batch_mode_warning_accepted';
+  static const String keyBatchModeWarningAccepted =
+      'batch_mode_warning_accepted';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;
@@ -129,6 +132,7 @@ class AppConstants {
     {
       'name': 'Gemma 4 E2B Instruct (LiteRT-LM)',
       'filename': 'gemma-4-E2B-it.litertlm',
+      'recommended': 'vision',
       'url':
           'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm',
       'size': '2.46 GB',
@@ -167,14 +171,72 @@ class AppConstants {
       'template': 'chatml',
     },
     {
+      'name': 'LFM2.5 1.2B Instruct (Q4_K_M)',
+      'filename': 'lfm2.5-1.2b-instruct-q4_k_m.gguf',
+      'recommended': 'general',
+      'url':
+          'https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf',
+      'size': '731 MB',
+      'description':
+          'Liquid AI\'s fast on-device model — quick replies on mid-range phones',
+      'template': 'chatml',
+    },
+    {
+      'name': 'LFM2.5-VL 1.6B (Q4_K_M)',
+      'filename': 'lfm2.5-vl-1.6b-q4_k_m.gguf',
+      'url':
+          'https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-GGUF/resolve/main/LFM2.5-VL-1.6B-Q4_K_M.gguf',
+      'size': '731 MB + 583 MB vision',
+      'description':
+          'Liquid AI\'s small vision model — fast, light enough for the GPU on most phones',
+      'template': 'chatml',
+      'vision': 'true',
+      'mmproj_filename': 'lfm2.5-vl-1.6b-mmproj-q8_0.gguf',
+      'mmproj_url':
+          'https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B-GGUF/resolve/main/mmproj-LFM2.5-VL-1.6b-Q8_0.gguf',
+    },
+    {
       'name': 'Qwen2-VL-2B Instruct (Q4_K_M)',
       'filename': 'qwen2-vl-2b-instruct-q4_k_m.gguf',
       'url':
-          'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
-      'size': '986 MB',
-      'description': 'Vision-capable — can understand images',
+          'https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
+      'size': '986 MB + 710 MB vision',
+      'description':
+          'Small vision model — describe photos, read text in images',
       'template': 'chatml',
       'vision': 'true',
+      'mmproj_filename': 'qwen2-vl-2b-instruct-mmproj-q8_0.gguf',
+      'mmproj_url':
+          'https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf',
+    },
+    {
+      'name': 'Gemma 4 E2B Uncensored Vision (Q2_K_P)',
+      'filename': 'gemma-4-e2b-uncensored-hauhaucs-aggressive-q2_k_p.gguf',
+      'recommended': 'uncensored',
+      'url':
+          'https://huggingface.co/HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive/resolve/main/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q2_K_P.gguf',
+      'size': '3.0 GB + 986 MB vision',
+      'description':
+          'Uncensored Gemma 4 with image understanding — smallest quant, needs ~4 GB free RAM',
+      'template': 'gemma',
+      'vision': 'true',
+      'mmproj_filename': 'gemma-4-e2b-uncensored-hauhaucs-mmproj-f16.gguf',
+      'mmproj_url':
+          'https://huggingface.co/HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive/resolve/main/mmproj-Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-f16.gguf',
+    },
+    {
+      'name': 'Gemma 3 4B Instruct Vision (Q4_K_M)',
+      'filename': 'gemma-3-4b-it-q4_k_m.gguf',
+      'url':
+          'https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf',
+      'size': '2.5 GB + 851 MB vision',
+      'description':
+          'Google\'s multimodal Gemma — stronger image understanding, needs ~4 GB free RAM',
+      'template': 'gemma',
+      'vision': 'true',
+      'mmproj_filename': 'gemma-3-4b-it-mmproj-f16.gguf',
+      'mmproj_url':
+          'https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/mmproj-model-f16.gguf',
     },
     {
       'name': 'Phi-3.5 Mini Instruct (Q4_K_M)',
@@ -252,6 +314,7 @@ class AppConstants {
     {
       'name': 'CyberRealistic V8 FP16 (SD 1.5)',
       'filename': 'CyberRealistic_V8_FP16.safetensors',
+      'recommended': 'image',
       'url':
           'https://huggingface.co/cyberdelia/CyberRealistic/resolve/main/CyberRealistic_V8_FP16.safetensors',
       'size': '2.0 GB',
@@ -262,17 +325,21 @@ class AppConstants {
     {
       'name': 'CyberRealistic (Apple CoreML FP16)',
       'filename': 'cyberrealistic.coreml.zip',
-      'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic.coreml.zip?download=true',
+      'url':
+          'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic.coreml.zip?download=true',
       'size': '2.0 GB',
-      'description': 'Optimized for Apple devices with M-series chips or 8GB+ RAM',
+      'description':
+          'Optimized for Apple devices with M-series chips or 8GB+ RAM',
       'template': 'sd',
     },
     {
       'name': 'CyberRealistic (Apple CoreML 6-bit)',
       'filename': 'cyberrealistic-6bit.coreml.zip',
-      'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic-6bit.coreml.zip?download=true',
+      'url':
+          'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic-6bit.coreml.zip?download=true',
       'size': '855 MB',
-      'description': 'Compressed 6-bit model optimized for Apple devices with 4GB/6GB RAM',
+      'description':
+          'Compressed 6-bit model optimized for Apple devices with 4GB/6GB RAM',
       'template': 'sd',
     },
     {

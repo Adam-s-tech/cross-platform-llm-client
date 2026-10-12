@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
 import '../controllers/model_controller.dart';
+import '../core/ui.dart';
 
 import 'download_native.dart' if (dart.library.html) 'download_web.dart'
     as platform_dl;
@@ -17,6 +18,7 @@ class DownloadProgress {
   final RxInt totalBytes = 0.obs;
   final RxDouble bytesPerSecond = 0.0.obs;
   final RxBool isPaused = false.obs;
+
   /// Human-readable state from the downloader ("Waiting to start...",
   /// "Paused: waiting for network", ...); empty while simply downloading.
   final RxString status = ''.obs;
@@ -101,7 +103,8 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
                   status == 'Downloading to phone...' ||
                   status == 'Waiting to start...' ||
                   status.startsWith('Paused') ||
-                  status.startsWith('Importing'))) {
+                  status.startsWith('Importing') ||
+                  status.startsWith('Saving'))) {
             progress = DownloadProgress(filename: filename);
             activeDownloads[filename] = progress;
           }
@@ -112,6 +115,12 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
             progress.status.value = status == 'Downloading...' ? '' : status;
             if (total > 0) {
               progress.progress.value = downloaded / total;
+            }
+
+            // Copy to the Downloads folder ("save:<name>") finished.
+            if (status == 'Saved to Downloads' || status == 'Save failed') {
+              activeDownloads.remove(filename);
+              return;
             }
 
             if (status == 'Download complete') {
@@ -161,10 +170,10 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
                   status.startsWith('Download failed') ||
                   status == 'Download cancelled') {
                 if (status == 'Download complete' && isPhoneDownload) {
-                  Get.snackbar(
+                  showToast(
                     'Saved to Downloads',
                     'Import this file to use it in the app.',
-                    snackPosition: SnackPosition.BOTTOM,
+                    tone: ToastTone.success,
                     duration: const Duration(seconds: 5),
                   );
                 }
@@ -296,8 +305,7 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
               .difference(downloadProgress.startedAt)
               .inMilliseconds;
           if (elapsed > 0) {
-            downloadProgress.bytesPerSecond.value =
-                received / (elapsed / 1000);
+            downloadProgress.bytesPerSecond.value = received / (elapsed / 1000);
           }
           if (total > 0) {
             downloadProgress.progress.value = received / total;
@@ -328,10 +336,10 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
   }
 
   void _notifyFailure(String filename, String message) {
-    Get.snackbar(
+    showToast(
       'Download failed',
       '$filename: ${message.replaceFirst('Download failed: ', '')}',
-      snackPosition: SnackPosition.BOTTOM,
+      tone: ToastTone.error,
       duration: const Duration(seconds: 6),
     );
   }

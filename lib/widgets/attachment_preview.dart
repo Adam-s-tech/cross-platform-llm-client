@@ -35,10 +35,13 @@ class AttachmentPreview extends StatelessWidget {
       constraints: compact ? const BoxConstraints(maxWidth: 260) : null,
       padding: EdgeInsets.all(compact ? 8 : 12),
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.black.withValues(alpha: 0.04),
+        color: isDark ? const Color(0xFF141416) : const Color(0xFFF5F5F7),
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.07)
+                : Colors.black.withValues(alpha: 0.06),
+            width: 0.5),
       ),
       child: Row(
         mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
@@ -112,7 +115,9 @@ class AttachmentPreview extends StatelessWidget {
         width: compact ? 36 : 42,
         height: compact ? 36 : 42,
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(10),
         ),
         child: image ??
@@ -146,7 +151,6 @@ class AttachmentPreview extends StatelessWidget {
     return null;
   }
 
-
   static String formatFileSize(int bytes) {
     if (bytes >= 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
@@ -170,8 +174,20 @@ class AttachmentPreview extends StatelessWidget {
     }
     if (ext == 'pdf') return 'pdf';
     if ([
-      'txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'xml',
-      'dart', 'kt', 'java', 'js', 'ts', 'py'
+      'txt',
+      'md',
+      'json',
+      'csv',
+      'log',
+      'yaml',
+      'yml',
+      'xml',
+      'dart',
+      'kt',
+      'java',
+      'js',
+      'ts',
+      'py'
     ].contains(ext)) {
       return 'text';
     }
@@ -180,31 +196,41 @@ class AttachmentPreview extends StatelessWidget {
 
   String _labelForType(String type) {
     switch (type) {
-      case 'image':  return 'Image';
-      case 'pdf':    return 'PDF';
-      case 'audio':  return 'Audio';
-      case 'text':   return 'Text file';
-      default:       return 'Attachment';
+      case 'image':
+        return 'Image';
+      case 'pdf':
+        return 'PDF';
+      case 'audio':
+        return 'Audio';
+      case 'text':
+        return 'Text file';
+      default:
+        return 'Attachment';
     }
   }
 
   IconData _iconForType(String type) {
     switch (type) {
-      case 'image':  return Icons.image_outlined;
-      case 'pdf':    return Icons.picture_as_pdf_outlined;
-      case 'audio':  return Icons.graphic_eq_rounded;
-      case 'text':   return Icons.description_outlined;
-      default:       return Icons.insert_drive_file_outlined;
+      case 'image':
+        return Icons.image_outlined;
+      case 'pdf':
+        return Icons.picture_as_pdf_outlined;
+      case 'audio':
+        return Icons.graphic_eq_rounded;
+      case 'text':
+        return Icons.description_outlined;
+      default:
+        return Icons.insert_drive_file_outlined;
     }
   }
 
   Color _colorForType(String type, bool isDark) {
-    switch (type) {
-      case 'image':  return isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
-      case 'pdf':    return const Color(0xFFFF3B30);
-      case 'audio':  return const Color(0xFFFF9500);
-      case 'text':   return isDark ? const Color(0xFF64D2FF) : const Color(0xFF5AC8FA);
-      default:       return isDark ? const Color(0xFF98989D) : const Color(0xFF8E8E93);
+    // Neutral glyphs; PDF keeps a muted red so the type still scans.
+    if (type == 'pdf') {
+      return isDark ? const Color(0xFFFF6961) : const Color(0xFFD93A30);
     }
+    return isDark
+        ? Colors.white.withValues(alpha: 0.8)
+        : Colors.black.withValues(alpha: 0.7);
   }
 }

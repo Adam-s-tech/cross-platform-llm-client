@@ -44,6 +44,9 @@ class InferenceEngine {
   Timer? _idleTimer;
   void Function()? _onStop;
   bool _isLiteRt = false;
+  // GGUF model loaded together with a working vision projector.
+  bool _ggufVisionLoaded = false;
+  bool get ggufVisionLoaded => _ggufVisionLoaded;
   bool _disposed = false;
   bool _hasLoadedModel = false;
   String? _liteConversationSystemPrompt;
@@ -64,6 +67,7 @@ class InferenceEngine {
     bool clearLiteRtCache = false,
     bool enableLiteRtVision = false,
     bool allowGgufGpu = true,
+    String? mmprojPath,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
@@ -81,7 +85,19 @@ class InferenceEngine {
     }
 
     _isLiteRt = false;
+    _ggufVisionLoaded = false;
     _controller = LlamaController();
+
+    // The native plugin can still hold a model this engine never loaded
+    // (e.g. after a Dart hot restart, or if an earlier unload was skipped).
+    // Free it first so the model the user picked actually loads.
+    try {
+      if (await _controller!.isModelLoaded()) {
+        print('[Inference] Freeing a stale native model before loading');
+        await _controller!.dispose();
+        _controller = LlamaController();
+      }
+    } catch (_) {}
 
     // ── GPU Detection ──
     int gpuLayers = 0;
@@ -89,7 +105,7 @@ class InferenceEngine {
 
     try {
       if (!allowGgufGpu) {
-        throw StateError('GPU disabled by CPU Safe mode or a previous GPU crash');
+        throw StateError('GPU disabled by CPU Safe mode');
       }
       final gpu = await _controller!.detectGpu();
       gpuNameStr = gpu.gpuName;
@@ -99,11 +115,25 @@ class InferenceEngine {
       print('[Inference]   Free RAM: ${gpu.freeRamBytes ~/ 1024 ~/ 1024}MB');
       print('[Inference]   Recommended layers: ${gpu.recommendedGpuLayers}');
 
-      // The plugin decides eligibility (SoC/driver blocklist, free RAM);
-      // a crash on a GPU it allows is caught by InferenceService's guard.
+      // The plugin decides eligibility (SoC/driver blocklist, free RAM).
       if (gpu.vulkanSupported && gpu.recommendedGpuLayers > 0) {
-        gpuLayers = gpu.recommendedGpuLayers;
-        print('[Inference] ✓ GPU offload: $gpuLayers layers on ${gpu.gpuName}');
+        // On phones the GPU shares system RAM, and offloading copies the
+        // weights into GPU buffers (CPU mode maps the file instead). If the
+        // model + vision file won't fit in free RAM with that copy, Android's
+        // low-memory killer closes the app — so stay on the CPU.
+        final modelBytes = await _fileLength(modelPath);
+        final visionBytes =
+            mmprojPath == null ? 0 : await _fileLength(mmprojPath);
+        final needed = ((modelBytes + visionBytes) * 1.25).round();
+        final free = gpu.freeRamBytes;
+        if (free > 0 && needed > free) {
+          print('[Inference] Model needs ~${needed ~/ (1024 * 1024)}MB for GPU '
+              'offload but only ${free ~/ (1024 * 1024)}MB is free — using CPU');
+        } else {
+          gpuLayers = gpu.recommendedGpuLayers;
+          print(
+              '[Inference] ✓ GPU offload: $gpuLayers layers on ${gpu.gpuName}');
+        }
       }
     } catch (e) {
       print('[Inference] GPU detection failed: $e — CPU fallback');
@@ -147,13 +177,18 @@ class InferenceEngine {
     } catch (_) {}
 
     // ── Load ──
-    await _controller!.loadModel(
+    final visionError = await _controller!.loadModel(
       modelPath: modelPath,
       threads: threads,
       contextSize: contextSize,
       gpuLayers: gpuLayers,
+      mmprojPath: mmprojPath,
     );
     _hasLoadedModel = true;
+    _ggufVisionLoaded = mmprojPath != null && visionError == null;
+    if (visionError != null) {
+      print('[Inference] Vision projector not loaded: $visionError');
+    }
 
     final accel = gpuLayers > 0
         ? 'GPU ($gpuLayers layers, $gpuNameStr)'
@@ -326,8 +361,9 @@ class InferenceEngine {
     }
 
     if (_controller == null) throw Exception('No model loaded');
-    if (imagePath != null && imagePath.isNotEmpty) {
-      return 'GGUF image input is not available in this build yet. This llama runtime is text-only right now: it does not load a matching mmproj vision projector or send image pixels into llama.cpp. Use a LiteRT vision model for image understanding.';
+    if (imagePath != null && imagePath.isNotEmpty && !_ggufVisionLoaded) {
+      return 'This model can\'t read images. Load a vision model (one marked '
+          'Vision in Models) to ask about photos.';
     }
     if (audioPath != null && audioPath.isNotEmpty) {
       return 'GGUF audio input is not available in this build yet. Text files can be read when their content is attached, but audio needs a model/runtime path that supports audio input.';
@@ -405,16 +441,19 @@ class InferenceEngine {
         if (tokenCount == 0) {
           print('[Inference] ✓ FIRST TOKEN received! Prefill done.');
         }
+        // Any token (even one that cleans to nothing) means the engine is
+        // alive. The limit only catches a stuck engine: big models on CPU
+        // can pause several seconds between tokens.
+        _idleTimer?.cancel();
+        _idleTimer = Timer(_tokenStallTimeout, () {
+          print('[Inference] Idle timeout — $tokenCount tokens');
+          finish(buffer.toString());
+        });
         final clean = _sanitizeGemmaGarbage(token);
         if (clean.isEmpty) return;
         buffer.write(clean);
         tokenCount++;
         onToken?.call(clean);
-        _idleTimer?.cancel();
-        _idleTimer = Timer(const Duration(seconds: 5), () {
-          print('[Inference] Idle timeout — $tokenCount tokens');
-          finish(buffer.toString());
-        });
       },
       onDone: () {
         print('[Inference] Stream onDone — $tokenCount tokens total');
@@ -530,7 +569,7 @@ class InferenceEngine {
             return;
           }
           _idleTimer?.cancel();
-          _idleTimer = Timer(const Duration(seconds: 8), () {
+          _idleTimer = Timer(_tokenStallTimeout, () {
             print(
                 '[Inference] LiteRT-LM multimodal idle timeout - $tokenCount chunks');
             finish(buffer.toString());
@@ -590,7 +629,7 @@ class InferenceEngine {
           return;
         }
         _idleTimer?.cancel();
-        _idleTimer = Timer(const Duration(seconds: 5), () {
+        _idleTimer = Timer(_tokenStallTimeout, () {
           print('[Inference] LiteRT-LM idle timeout - $tokenCount chunks');
           finish(buffer.toString());
         });
@@ -740,7 +779,6 @@ class InferenceEngine {
 
   // ── Helpers ──
 
-
   /// Safety cap on a single generation. It scales with the token budget
   /// (allowing ~1 token/s) so slow phones aren't cut off mid-answer; the idle
   /// timeouts already catch a model that has stopped producing tokens.
@@ -800,6 +838,18 @@ class InferenceEngine {
   /// Strip Gemma garbage tokens that leak when Q4_K_M dequant is corrupt
   /// on Google Tensor SoC. Harmless on devices that don't produce them.
   /// NOTE: Do NOT trim() — SentencePiece tokens rely on leading spaces.
+  Future<int> _fileLength(String path) async {
+    try {
+      return await File(path).length();
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// How long generation may go without a new token before it's treated as
+  /// stuck and ended.
+  static const _tokenStallTimeout = Duration(seconds: 30);
+
   String _sanitizeGemmaGarbage(String text) {
     return text
         .replaceAll(RegExp(r'<unused\d+>'), '')

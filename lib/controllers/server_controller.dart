@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../core/constants.dart';
+import '../core/ui.dart';
 import '../services/app_log_service.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
@@ -71,7 +72,8 @@ class ServerController extends GetxController {
     lastError.value = null;
     if (!hasLocalModel) {
       lastError.value = 'Load a local GGUF or LiteRT-LM model first.';
-      Get.snackbar('Server not started', lastError.value!);
+      showToast('Server not started', lastError.value!,
+          tone: ToastTone.warning);
       return;
     }
 
@@ -93,7 +95,7 @@ class ServerController extends GetxController {
       lastError.value = '$e';
       serverStatus.value = 'Server failed';
       Get.find<AppLogService>().error('API server failed', details: e);
-      Get.snackbar('Server failed', '$e');
+      showToast('Server failed', '$e', tone: ToastTone.error);
     } finally {
       isStarting.value = false;
     }
@@ -165,7 +167,7 @@ class ServerController extends GetxController {
 
   Future<void> copyText(String text, String label) async {
     await Clipboard.setData(ClipboardData(text: text));
-    Get.snackbar('Copied', '$label copied.');
+    showToast('Copied', '$label copied.', tone: ToastTone.success);
   }
 
   String get baseUrl => localUrl.value ?? 'http://localhost:$port';

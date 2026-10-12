@@ -1,185 +1,200 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../core/colors.dart';
+import '../core/ui.dart';
 import '../services/app_log_service.dart';
 
-class LogView extends StatelessWidget {
+const _tabular = [FontFeature.tabularFigures()];
+
+class LogView extends StatefulWidget {
   const LogView({super.key});
 
   @override
+  State<LogView> createState() => _LogViewState();
+}
+
+class _LogViewState extends State<LogView> {
+  final _logs = Get.find<AppLogService>();
+  final _filter = 'ALL'.obs;
+
+  static const _filters = [
+    ('ALL', 'All'),
+    ('ERROR', 'Errors'),
+    ('WARNING', 'Warnings'),
+    ('INFO', 'Info'),
+    ('DEBUG', 'Debug'),
+  ];
+
+  Future<void> _copy() async {
+    await _logs.copyImportantLogs();
+    if (!mounted) return;
+    showToast('Copied', 'Important logs copied to the clipboard.',
+        tone: ToastTone.success);
+  }
+
+  Future<void> _clear() async {
+    final ok = await confirmSheet(
+      context,
+      title: 'Clear logs?',
+      message: 'All captured log entries will be removed.',
+      confirmLabel: 'Clear',
+      destructive: true,
+    );
+    if (ok) _logs.clear();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final logs = Get.find<AppLogService>();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final selectedFilter = 'ALL'.obs;
-    final filters = ['ALL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'];
-
-    Color levelColor(String level) {
-      switch (level) {
-        case 'ERROR':
-          return AppColors.error;
-        case 'WARNING':
-          return AppColors.warning;
-        case 'INFO':
-          return AppColors.success;
-        case 'DEBUG':
-          return const Color(0xFF8E8E93);
-        default:
-          return Theme.of(context).hintColor;
-      }
-    }
-
-    IconData levelIcon(String level) {
-      switch (level) {
-        case 'ERROR':
-          return Icons.error_outline_rounded;
-        case 'WARNING':
-          return Icons.warning_amber_rounded;
-        case 'INFO':
-          return Icons.info_outline_rounded;
-        case 'DEBUG':
-          return Icons.bug_report_outlined;
-        default:
-          return Icons.list_alt_rounded;
-      }
-    }
-
+    final t = AppTokens.of(context);
     return Scaffold(
-      backgroundColor: isDark ? Colors.black : const Color(0xFFF2F2F7),
-      appBar: AppBar(
-        backgroundColor: isDark ? Colors.black : const Color(0xFFF2F2F7),
-        title: Text('Logs', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+      backgroundColor: t.bg,
+      appBar: appScreenBar(
+        context,
+        title: 'Logs',
+        showBack: true,
         actions: [
-          IconButton(
-            tooltip: 'Share logs',
-            icon: Icon(Icons.ios_share_rounded, size: 20, color: isDark ? const Color(0xFF0A84FF) : AppColors.primary),
-            onPressed: () async {
-              await logs.copyImportantLogs();
-              Get.snackbar('Copied', 'Important logs copied to clipboard.', snackPosition: SnackPosition.BOTTOM);
-            },
-          ),
-          IconButton(
-            tooltip: 'Clear logs',
-            icon: Icon(Icons.delete_outline_rounded, size: 20, color: Theme.of(context).hintColor),
-            onPressed: logs.clear,
-          ),
+          Obx(() => AppBarIcon(
+                icon: Icons.copy_rounded,
+                tooltip: 'Copy important logs',
+                onPressed: _logs.entries.isEmpty ? null : _copy,
+              )),
+          Obx(() => AppBarIcon(
+                icon: Icons.delete_outline_rounded,
+                tooltip: 'Clear logs',
+                onPressed: _logs.entries.isEmpty ? null : _clear,
+              )),
         ],
       ),
-      body: Column(
-        children: [
-          // Filter chips
-          Container(
-            height: 52,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Obx(() => ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: filters.length,
-              itemBuilder: (context, index) {
-                final filter = filters[index];
-                final isSelected = selectedFilter.value == filter;
-                final color = filter == 'ALL'
-                    ? (isDark ? Colors.white : Colors.black)
-                    : levelColor(filter);
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  child: ChoiceChip(
-                    label: Text(filter),
-                    labelStyle: GoogleFonts.inter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected ? Colors.white : color,
-                    ),
-                    selected: isSelected,
-                    selectedColor: color,
-                    backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: BorderSide(
-                        color: isSelected ? color : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA)),
-                      ),
-                    ),
-                    onSelected: (_) => selectedFilter.value = filter,
-                    visualDensity: VisualDensity.compact,
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 8, 10),
+          child: Obx(() => AppChips<String>(
+                items: _filters,
+                selected: _filter.value,
+                onSelected: (v) => _filter.value = v,
+              )),
+        ),
+        Container(height: 0.5, color: t.hairline),
+        Expanded(
+          child: Obx(() {
+            final all = _logs.entries;
+            final f = _filter.value;
+            final filtered = f == 'ALL'
+                ? all.toList()
+                : all.where((e) => e.level == f).toList();
+
+            if (filtered.isEmpty) {
+              final label = _filters.firstWhere((e) => e.$1 == f).$2;
+              return Center(
+                child: SingleChildScrollView(
+                  child: EmptyState(
+                    icon: Icons.check_rounded,
+                    title: f == 'ALL'
+                        ? 'No logs yet'
+                        : 'No ${label.toLowerCase()}',
+                    message: f == 'ALL'
+                        ? 'Errors, warnings and debug details will appear here.'
+                        : 'Nothing at this level has been captured.',
                   ),
-                );
-              },
-            )),
-          ),
-          // Log list
-          Expanded(
-            child: Obx(() {
-              final all = logs.entries;
-              final filtered = selectedFilter.value == 'ALL'
-                  ? all
-                  : all.where((e) => e.level == selectedFilter.value).toList();
-
-              if (filtered.isEmpty) {
-                return Center(
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Container(
-                      width: 56, height: 56,
-                      decoration: BoxDecoration(
-                        color: AppColors.success.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Icon(Icons.check_circle_outline_rounded, size: 28, color: AppColors.success),
-                    ),
-                    const SizedBox(height: 16),
-                    Text('All Clear', style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black)),
-                    const SizedBox(height: 6),
-                    Text('No ${selectedFilter.value == 'ALL' ? '' : '${selectedFilter.value.toLowerCase()} '}logs captured yet.', style: GoogleFonts.inter(fontSize: 15, color: Theme.of(context).hintColor)),
-                  ]),
-                );
-              }
-
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: filtered.length,
-                itemBuilder: (context, index) {
-                  final entry = filtered[index];
-                  final color = levelColor(entry.level);
-
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Row(children: [
-                        Container(
-                          width: 24, height: 24,
-                          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
-                          child: Icon(levelIcon(entry.level), color: color, size: 14),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(entry.level, style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
-                        const Spacer(),
-                        Text(_formatTime(entry.timestamp), style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor)),
-                      ]),
-                      const SizedBox(height: 10),
-                      SelectableText(entry.message, style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: isDark ? Colors.white : Colors.black)),
-                      if (entry.details != null && entry.details!.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: SelectableText(entry.details!, style: GoogleFonts.firaCode(fontSize: 11, color: Theme.of(context).hintColor)),
-                        ),
-                      ],
-                    ]),
-                  );
-                },
+                ),
               );
-            }),
+            }
+
+            return ListView.separated(
+              padding: const EdgeInsets.only(bottom: 24),
+              itemCount: filtered.length,
+              separatorBuilder: (_, __) => Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: Container(height: 0.5, color: t.hairline),
+              ),
+              itemBuilder: (context, index) =>
+                  _LogEntryTile(entry: filtered[index]),
+            );
+          }),
+        ),
+      ]),
+    );
+  }
+}
+
+class _LogEntryTile extends StatefulWidget {
+  final AppLogEntry entry;
+  const _LogEntryTile({required this.entry});
+
+  @override
+  State<_LogEntryTile> createState() => _LogEntryTileState();
+}
+
+class _LogEntryTileState extends State<_LogEntryTile> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
+    final e = widget.entry;
+    final hasDetails = e.details != null && e.details!.trim().isNotEmpty;
+
+    final (String levelLabel, Color? levelColor) = switch (e.level) {
+      'ERROR' => ('Error', t.red),
+      'WARNING' => ('Warning', t.orange),
+      'INFO' => ('Info', null),
+      'DEBUG' => ('Debug', null),
+      _ => (e.level, null),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          AppTag(levelLabel, color: levelColor),
+          const SizedBox(width: 8),
+          Text(_formatTime(e.timestamp),
+              style: t.small.copyWith(fontFeatures: _tabular)),
+        ]),
+        const SizedBox(height: 6),
+        SelectableText(e.message, style: t.body.copyWith(fontSize: 14)),
+        if (hasDetails) ...[
+          const SizedBox(height: 6),
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(6),
+            splashFactory: NoSplash.splashFactory,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(_expanded ? 'Hide details' : 'Show details',
+                    style: t.small.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(width: 2),
+                AnimatedRotation(
+                  turns: _expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child:
+                      Icon(Icons.expand_more_rounded, size: 16, color: t.muted),
+                ),
+              ]),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _expanded
+                ? Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 6),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: t.surface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: t.hairline, width: 0.5),
+                    ),
+                    child: SelectableText(e.details!,
+                        style: t.mono.copyWith(
+                            fontSize: 11.5, color: t.muted, height: 1.45)),
+                  )
+                : const SizedBox(width: double.infinity),
           ),
         ],
-      ),
+      ]),
     );
   }
 

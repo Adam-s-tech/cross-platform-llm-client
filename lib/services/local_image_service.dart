@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
 import 'package:sd_flutter_android/sd_flutter_android.dart';
 import '../core/constants.dart';
+import '../core/ui.dart';
 import '../ffi/sd_ffi_bindings.dart';
 import 'app_log_service.dart';
 import 'hive_service.dart';
@@ -15,6 +16,10 @@ class LocalImageService extends GetxService {
 
   final isModelLoaded = false.obs;
   final isLoadingModel = false.obs;
+
+  /// Name of the model currently being loaded (empty when idle), so the
+  /// Models screen can show progress on the right card.
+  final loadingModelName = ''.obs;
   final isGenerating = false.obs;
   final progress = 0.0.obs;
   final loadedModelName = ''.obs;
@@ -109,6 +114,9 @@ class LocalImageService extends GetxService {
   @override
   void onInit() {
     super.onInit();
+    ever<bool>(isLoadingModel, (loading) {
+      if (!loading) loadingModelName.value = '';
+    });
     // Restore saved backend / quantization preferences
     final savedBackendIndex = _hive.getSetting<int>(
         AppConstants.keyImageGenBackend,
@@ -141,6 +149,7 @@ class LocalImageService extends GetxService {
         await unloadModel();
       }
 
+      loadingModelName.value = modelName ?? modelPath.split('/').last;
       isLoadingModel.value = true;
       progress.value = 0.0;
 
@@ -164,13 +173,16 @@ class LocalImageService extends GetxService {
       }
 
       if (Platform.isIOS) {
-        final isCoreML = modelPath.toLowerCase().endsWith('.mlmodelc') || modelPath.toLowerCase().endsWith('.mlpackage') || modelPath.toLowerCase().endsWith('.coreml');
-        
+        final isCoreML = modelPath.toLowerCase().endsWith('.mlmodelc') ||
+            modelPath.toLowerCase().endsWith('.mlpackage') ||
+            modelPath.toLowerCase().endsWith('.coreml');
+
         if (isCoreML) {
           print('[LocalImageService] Using Apple CoreML backend...');
           const coreMlChannel = MethodChannel('coreml_stable_diffusion');
-          final result = await coreMlChannel.invokeMethod('initModel', {'path': modelPath});
-          
+          final result = await coreMlChannel
+              .invokeMethod('initModel', {'path': modelPath});
+
           if (result is String && result.contains('loaded successfully')) {
             currentBackend.value = Backend.metal; // Show NPU on iOS UI
             isUsingGpu.value = true;
@@ -178,7 +190,8 @@ class LocalImageService extends GetxService {
             isLoadingModel.value = false;
             loadedModelName.value = modelName ?? modelPath.split('/').last;
             await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
-            await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
+            await _hive.setSetting(
+                AppConstants.keyImageModelName, loadedModelName.value);
             return 'Image model loaded successfully.';
           } else {
             isModelLoaded.value = false;
@@ -187,7 +200,8 @@ class LocalImageService extends GetxService {
           }
         } else {
           print('[LocalImageService] Using standard Metal C++ backend...');
-          final modelLoaded = await SdFlutterAndroid.initModel(modelPath, useGpu: true);
+          final modelLoaded =
+              await SdFlutterAndroid.initModel(modelPath, useGpu: true);
           if (!modelLoaded) {
             isModelLoaded.value = false;
             isLoadingModel.value = false;
@@ -204,7 +218,8 @@ class LocalImageService extends GetxService {
           isLoadingModel.value = false;
           loadedModelName.value = modelName ?? modelPath.split('/').last;
           await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
-          await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
+          await _hive.setSetting(
+              AppConstants.keyImageModelName, loadedModelName.value);
           return 'Image model loaded successfully.';
         }
       }
@@ -315,10 +330,10 @@ class LocalImageService extends GetxService {
     // Tearing down the isolate while sd.cpp is mid-render leaks the native
     // context (GBs) and can crash, so wait until the job has finished.
     if (_nativeJobRunning) {
-      Get.snackbar(
+      showToast(
         'Image still generating',
         'Wait for the current image to finish, then unload the model.',
-        snackPosition: SnackPosition.BOTTOM,
+        tone: ToastTone.warning,
       );
       return;
     }
@@ -452,22 +467,28 @@ class LocalImageService extends GetxService {
           coreMlChannel.setMethodCallHandler((call) async {
             if (call.method == 'onProgress') {
               final args = call.arguments as Map;
-              onProgress?.call((args['step'] as num).toInt(), (args['total'] as num).toInt());
+              onProgress?.call((args['step'] as num).toInt(),
+                  (args['total'] as num).toInt());
             }
           });
-          
-          final bytes = await coreMlChannel.invokeMethod<Uint8List>('generateImage', {
+
+          final bytes =
+              await coreMlChannel.invokeMethod<Uint8List>('generateImage', {
             'prompt': prompt,
             'steps': effectiveSteps,
           });
-          
+
           coreMlChannel.setMethodCallHandler(null);
-          
+
           if (bytes != null) {
             isGenerating.value = false;
             return bytes; // CoreML returns PNG directly
           } else {
-            result = GenerationResult(rgbBytes: null, width: imageSize, height: imageSize, error: 'Failed to generate on CoreML');
+            result = GenerationResult(
+                rgbBytes: null,
+                width: imageSize,
+                height: imageSize,
+                error: 'Failed to generate on CoreML');
           }
         } else {
           // Standard C++ Metal Route
@@ -525,7 +546,7 @@ class LocalImageService extends GetxService {
       // TODO: switch to ui.decodeImageFromPixels for GPU-accelerated decode
       print(
           '[LocalImageService] Encoding ${result.width}x${result.height} RGB to PNG...');
-      
+
       Uint8List pngBytes;
       if (Platform.isIOS) {
         // iOS wrapper already returns RGB data. Wait, actually `SdIosWrapper.mm` returns raw RGB bytes.
@@ -546,7 +567,7 @@ class LocalImageService extends GetxService {
         );
         pngBytes = Uint8List.fromList(img.encodePng(image));
       }
-      
+
       print('[LocalImageService] PNG encoded: ${pngBytes.length} bytes');
 
       isGenerating.value = false;

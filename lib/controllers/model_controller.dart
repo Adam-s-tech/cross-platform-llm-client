@@ -18,6 +18,15 @@ import 'settings_controller.dart';
 
 enum _ModelLoadAction { cancel, unloadAndContinue, continueLoad }
 
+/// A model file found by scanning a folder the user picked.
+class FolderModelFile {
+  final String uri;
+  final String name;
+  final int size;
+  const FolderModelFile(
+      {required this.uri, required this.name, required this.size});
+}
+
 class ModelController extends GetxController {
   final DownloadService _download = Get.find<DownloadService>();
   final LocalImageService _localImage = Get.find<LocalImageService>();
@@ -59,7 +68,6 @@ class ModelController extends GetxController {
   static bool get supportsAppleNpu => Platform.isIOS || Platform.isMacOS;
 
   static const localFilters = [
-    'downloaded',
     'general',
     'image',
     'uncensored',
@@ -93,8 +101,6 @@ class ModelController extends GetxController {
         localFilter.value.isEmpty ? defaultLocalFilter : localFilter.value;
     final filtered = displayedModels.where((model) {
       switch (filter) {
-        case 'downloaded':
-          return isDownloaded(model.filename);
         case 'uncensored':
           return isUncensoredModel(model);
         case 'vision':
@@ -116,8 +122,7 @@ class ModelController extends GetxController {
     ];
   }
 
-  String get defaultLocalFilter =>
-      downloadedFiles.isNotEmpty ? 'downloaded' : 'general';
+  String get defaultLocalFilter => 'general';
 
   double get importProgress => importTotalBytes.value <= 0
       ? 0.0
@@ -1182,7 +1187,7 @@ class ModelController extends GetxController {
         fileSizes[filename] = await File(destPath).length();
 
         await refreshDownloaded();
-        localFilter.value = 'downloaded';
+        modelScope.value = 'local';
         importStatus.value = 'Import complete';
         showToast('Import Successful', 'Model $filename imported.',
             tone: ToastTone.success);
@@ -1228,7 +1233,7 @@ class ModelController extends GetxController {
         fileSizes[filename] = (result?['bytes'] as num?)?.toInt() ??
             await _download.getModelSize(filename);
         await refreshDownloaded();
-        localFilter.value = 'downloaded';
+        modelScope.value = 'local';
         showToast('Import Successful', 'Model $filename imported.',
             tone: ToastTone.success);
       }
@@ -1242,6 +1247,89 @@ class ModelController extends GetxController {
       Get.find<AppLogService>()
           .error('Android model import failed', details: e);
       showToast('Import Failed', '$e', tone: ToastTone.error);
+    } finally {
+      isImporting.value = false;
+      importFileName.value = '';
+      importStatus.value = '';
+      importCopiedBytes.value = 0;
+      importTotalBytes.value = 0;
+      importBytesPerSecond.value = 0;
+    }
+  }
+
+  /// Folder import is Android only (storage access framework tree picker).
+  bool get supportsFolderImport => Platform.isAndroid;
+
+  /// Opens the system folder picker and lists the model files inside.
+  /// Returns null when the user cancels.
+  Future<List<FolderModelFile>?> pickModelFolder() async {
+    try {
+      final result = await _androidImportChannel
+          .invokeMapMethod<String, dynamic>('pickModelFolder');
+      if (result == null || result['cancelled'] == true) return null;
+      return (result['files'] as List? ?? [])
+          .map((f) => Map<String, dynamic>.from(f as Map))
+          .map((f) => FolderModelFile(
+                uri: f['uri'] as String,
+                name: f['name'] as String,
+                size: (f['size'] as num).toInt(),
+              ))
+          .toList();
+    } on PlatformException catch (e) {
+      Get.find<AppLogService>()
+          .error('Folder scan failed', details: '${e.code}: ${e.message}');
+      showToast('Couldn\'t read folder', e.message ?? e.code,
+          tone: ToastTone.error);
+      return null;
+    }
+  }
+
+  /// Copies the chosen files into app storage one after another, with the
+  /// same progress card as a single import.
+  Future<void> importFolderFiles(List<FolderModelFile> files) async {
+    if (files.isEmpty) return;
+    if (isImporting.value) {
+      showToast('Import in Progress', 'Wait for the current import to finish.',
+          tone: ToastTone.warning);
+      return;
+    }
+    final modelsDir = await _download.modelsDir;
+    var imported = 0;
+    final failed = <String>[];
+    isImporting.value = true;
+    try {
+      for (final file in files) {
+        importFileName.value = file.name;
+        importStatus.value = 'Copying to app storage...';
+        importCopiedBytes.value = 0;
+        importTotalBytes.value = file.size;
+        importBytesPerSecond.value = 0;
+        try {
+          final result =
+              await _androidImportChannel.invokeMapMethod<String, dynamic>(
+            'importModelUri',
+            {'uri': file.uri, 'modelsDir': modelsDir},
+          );
+          final name = result?['filename'] as String? ?? file.name;
+          fileSizes[name] = (result?['bytes'] as num?)?.toInt() ?? file.size;
+          imported++;
+        } on PlatformException catch (e) {
+          failed.add(file.name);
+          Get.find<AppLogService>().error('Folder import failed',
+              details: '${file.name} · ${e.code}: ${e.message}');
+        }
+      }
+      await refreshDownloaded();
+      modelScope.value = 'local';
+      if (failed.isEmpty) {
+        showToast('Import Successful',
+            imported == 1 ? '1 model imported.' : '$imported models imported.',
+            tone: ToastTone.success);
+      } else {
+        showToast('Some imports failed',
+            '$imported imported · couldn\'t import ${failed.join(', ')}',
+            tone: ToastTone.warning);
+      }
     } finally {
       isImporting.value = false;
       importFileName.value = '';

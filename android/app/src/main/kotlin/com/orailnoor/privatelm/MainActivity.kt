@@ -14,6 +14,7 @@ import android.util.Log
 import android.os.Handler
 import android.os.Looper
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,6 +28,8 @@ import org.json.JSONObject
 class MainActivity : FlutterActivity() {
     private val importChannelName = "com.aichat.ai_chat/model_import"
     private val importRequestCode = 4207
+    private val folderRequestCode = 4208
+    private var pendingFolderResult: MethodChannel.Result? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var importChannel: MethodChannel? = null
@@ -52,6 +55,40 @@ class MainActivity : FlutterActivity() {
                     pendingModelsDir = modelsDir
                     pendingImportResult = result
                     openModelPicker()
+                }
+                "pickModelFolder" -> {
+                    if (pendingFolderResult != null) {
+                        result.error("PICK_BUSY", "A folder picker is already open.", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingFolderResult = result
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                    }
+                    startActivityForResult(intent, folderRequestCode)
+                }
+                "importModelUri" -> {
+                    val uriString = call.argument<String>("uri")
+                    val modelsDir = call.argument<String>("modelsDir")
+                    if (uriString.isNullOrBlank() || modelsDir.isNullOrBlank()) {
+                        result.error("BAD_ARGS", "uri and modelsDir are required", null)
+                        return@setMethodCallHandler
+                    }
+                    if (pendingImportResult != null) {
+                        result.error("IMPORT_BUSY", "Another model import is already running.", null)
+                        return@setMethodCallHandler
+                    }
+                    val uri = Uri.parse(uriString)
+                    val size = sizeFor(uri)
+                    if (size <= 0L) {
+                        result.error("EMPTY_MODEL", "The file is empty or unreadable.", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingImportResult = result
+                    pendingModelsDir = modelsDir
+                    val destination = File(modelsDir, sanitizeFilename(displayNameFor(uri)))
+                    copyUriToModel(uri, destination, size, destination.exists())
                 }
                 "downloadToDownloads" -> {
                     val url = call.argument<String>("url")
@@ -618,6 +655,10 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == folderRequestCode) {
+            handleFolderResult(resultCode, data)
+            return
+        }
         if (requestCode != importRequestCode) return
 
         if (resultCode != RESULT_OK || data?.data == null) {
@@ -672,6 +713,76 @@ class MainActivity : FlutterActivity() {
         } else {
             copyUriToModel(uri, destination, size, false)
         }
+    }
+
+    private fun handleFolderResult(resultCode: Int, data: Intent?) {
+        val result = pendingFolderResult ?: return
+        pendingFolderResult = null
+        val treeUri = data?.data
+        if (resultCode != RESULT_OK || treeUri == null) {
+            result.success(mapOf("cancelled" to true))
+            return
+        }
+        try {
+            contentResolver.takePersistableUriPermission(
+                treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) {
+            // The one-shot grant is enough for this session.
+        }
+        thread(name = "scan-model-folder") {
+            try {
+                val files = scanModelTree(treeUri)
+                mainHandler.post {
+                    result.success(mapOf("cancelled" to false, "files" to files))
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    result.error("SCAN_FAILED", e.message ?: e.toString(), null)
+                }
+            }
+        }
+    }
+
+    /** Model files (.gguf, .litertlm, .safetensors) in a picked folder and
+     *  up to three levels of subfolders. */
+    private fun scanModelTree(treeUri: Uri): List<Map<String, Any>> {
+        val found = mutableListOf<Map<String, Any>>()
+        val columns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE
+        )
+        fun walk(docId: String, depth: Int) {
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+            contentResolver.query(children, columns, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getString(0) ?: continue
+                    val name = c.getString(1) ?: continue
+                    val mime = c.getString(2)
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        if (depth < 3) walk(id, depth + 1)
+                        continue
+                    }
+                    val lower = name.lowercase()
+                    if (!lower.endsWith(".gguf") && !lower.endsWith(".litertlm") &&
+                        !lower.endsWith(".safetensors")
+                    ) continue
+                    val size = if (c.isNull(3)) 0L else c.getLong(3)
+                    if (size <= 0L) continue
+                    found.add(
+                        mapOf(
+                            "uri" to DocumentsContract.buildDocumentUriUsingTree(treeUri, id).toString(),
+                            "name" to name,
+                            "size" to size
+                        )
+                    )
+                }
+            }
+        }
+        walk(DocumentsContract.getTreeDocumentId(treeUri), 0)
+        return found.sortedBy { (it["name"] as String).lowercase() }
     }
 
     private fun copyUriToModel(uri: Uri, destination: File, totalBytes: Long, replacing: Boolean) {

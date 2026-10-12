@@ -44,27 +44,29 @@ class ModelView extends GetView<ModelController> {
         title: 'Models',
         actions: [
           Obx(() {
-            if (controller.modelScope.value != 'local') {
+            if (controller.modelScope.value == 'online') {
               return const SizedBox.shrink();
             }
-            return AppBarIcon(
-              icon: Icons.file_upload_outlined,
-              tooltip: 'Import from storage',
-              onPressed: () => controller.importModelFromStorage(),
+            return _TextAction(
+              icon: Icons.add_rounded,
+              label: 'Import',
+              color: t.accent,
+              onTap: controller.isImporting.value
+                  ? null
+                  : () => _showImportSheet(context),
             );
           }),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          if (controller.modelScope.value == 'local') {
+          if (controller.modelScope.value != 'online') {
             await controller.refreshDownloaded();
           }
         },
         color: t.accent,
         child: Obx(() {
-          final isLocal = controller.modelScope.value == 'local';
-          final models = controller.filteredDisplayedModels;
+          final scope = controller.modelScope.value;
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
             children: [
@@ -72,13 +74,13 @@ class ModelView extends GetView<ModelController> {
               const SizedBox(height: 16),
               _buildActiveModelBanner(context),
               _buildActiveDownloadsBanner(context),
-              if (isLocal) ...[
+              if (scope == 'local') ...[
                 _buildImportingProgress(context),
+                ..._buildLibrary(context),
+              ] else if (scope == 'browse') ...[
+                _buildFeatured(context),
                 _buildLocalFilterChips(context),
-                if (models.isEmpty)
-                  _buildEmptyLocalState(context)
-                else
-                  ..._buildModelSections(context, models),
+                ..._buildBrowse(context),
               ] else
                 _buildOnlineProviders(context),
             ],
@@ -90,7 +92,11 @@ class ModelView extends GetView<ModelController> {
 
   Widget _buildScopeToggle(BuildContext context) {
     return Obx(() => AppSegmented<String>(
-          items: const [('local', 'Local'), ('online', 'Online')],
+          items: const [
+            ('local', 'My models'),
+            ('browse', 'Browse'),
+            ('online', 'Cloud'),
+          ],
           selected: controller.modelScope.value,
           onChanged: (value) => controller.modelScope.value = value,
         ));
@@ -104,16 +110,14 @@ class ModelView extends GetView<ModelController> {
       return PillButton(
         label: 'Import file',
         icon: Icons.file_upload_outlined,
-        primary: true,
-        onPressed: busy ? null : () => controller.importModelFromStorage(),
+        onPressed: busy ? null : () => _showImportSheet(context),
       );
     });
   }
 
   Widget _buildLocalFilterChips(BuildContext context) {
     final labels = [
-      ('downloaded', 'Downloaded'),
-      ('general', 'General'),
+      ('general', 'Chat'),
       ('image', 'Image'),
       ('uncensored', 'Uncensored'),
       ('vision', 'Vision'),
@@ -131,24 +135,72 @@ class ModelView extends GetView<ModelController> {
     });
   }
 
-  Widget _buildEmptyLocalState(BuildContext context) {
-    final filter = controller.localFilter.value.isEmpty
-        ? controller.defaultLocalFilter
-        : controller.localFilter.value;
-    final title = filter == 'downloaded'
-        ? 'No downloaded models yet'
-        : 'No ${filter == 'vision' ? 'vision' : filter == 'image' ? 'image generation' : filter == 'npu' ? 'Apple NPU' : filter} models found';
-    final subtitle = filter == 'downloaded'
-        ? 'Download one from General, or import a model file.'
-        : 'Try another filter.';
+  // ── Import ────────────────────────────────────────────────────────────
 
+  void _showImportSheet(BuildContext context) {
+    showAppSheet<void>(
+      context,
+      title: 'Import model',
+      subtitle: 'Add .gguf, .litertlm or .safetensors files from your phone.',
+      builder: (ctx) => AppGroup(dividerIndent: 60, children: [
+        AppRow(
+          icon: Icons.insert_drive_file_outlined,
+          title: 'Import file',
+          subtitle: 'Choose a single model file',
+          chevron: true,
+          onTap: () {
+            Navigator.pop(ctx);
+            controller.importModelFromStorage();
+          },
+        ),
+        if (controller.supportsFolderImport)
+          AppRow(
+            icon: Icons.folder_open_rounded,
+            title: 'Import from folder',
+            subtitle: 'Scan a folder and pick the models to add',
+            chevron: true,
+            onTap: () {
+              Navigator.pop(ctx);
+              _importFromFolder(context);
+            },
+          ),
+      ]),
+    );
+  }
+
+  Future<void> _importFromFolder(BuildContext context) async {
+    final files = await controller.pickModelFolder();
+    if (files == null || !context.mounted) return;
+    if (files.isEmpty) {
+      showToast('No models found',
+          'That folder has no .gguf, .litertlm or .safetensors files.',
+          tone: ToastTone.warning);
+      return;
+    }
+    final chosen = await showAppSheet<List<FolderModelFile>>(
+      context,
+      title: 'Models in folder',
+      subtitle: '${files.length} ${files.length == 1 ? 'file' : 'files'} found',
+      builder: (_) => _FolderImportList(files: files, controller: controller),
+    );
+    if (chosen != null && chosen.isNotEmpty) {
+      await controller.importFolderFiles(chosen);
+    }
+  }
+
+  Widget _buildEmptyLibrary(BuildContext context) {
     return EmptyState(
-      icon: filter == 'downloaded'
-          ? Icons.download_rounded
-          : Icons.search_off_rounded,
-      title: title,
-      message: subtitle,
-      action: filter == 'downloaded' ? _buildLocalActions(context) : null,
+      icon: Icons.download_rounded,
+      title: 'No models on this phone yet',
+      message: 'Download one from Browse, or import a model file.',
+      action: Wrap(spacing: 8, children: [
+        PillButton(
+          label: 'Browse models',
+          primary: true,
+          onPressed: () => controller.modelScope.value = 'browse',
+        ),
+        _buildLocalActions(context),
+      ]),
     );
   }
 
@@ -207,7 +259,7 @@ class ModelView extends GetView<ModelController> {
   /// helper files), so progress stays visible while browsing the list.
   Widget _buildActiveDownloadsBanner(BuildContext context) {
     return Obx(() {
-      if (controller.modelScope.value != 'local') {
+      if (controller.modelScope.value == 'online') {
         return const SizedBox.shrink();
       }
       final downloads = controller.activeDownloads.values.toList();
@@ -1438,7 +1490,8 @@ class ModelView extends GetView<ModelController> {
     if (confirmed) await controller.deleteModel(filename);
   }
 
-  Widget _buildModelCard(BuildContext context, AiModel model) {
+  Widget _buildModelCard(BuildContext context, AiModel model,
+      {bool library = false}) {
     return Obx(() {
       final t = AppTokens.of(context);
       final actualFilename = model.filename.toLowerCase().endsWith('.zip')
@@ -1475,37 +1528,44 @@ class ModelView extends GetView<ModelController> {
 
       // Primary action (right). While downloading: a progress ring with the
       // percentage (cancel lives in the pinned downloads card at the top).
-      Widget? primaryAction;
+      final Widget primaryAction;
       if (isCurrentlyDownloading) {
         primaryAction = _DownloadRing(filename: model.filename);
-      } else {
-        if (isDownloaded) {
-          if (isThisModelLoading) {
-            primaryAction = PillButton(
-              label: isThisImageModelLoading ? 'Loading' : '$loadPercent%',
-            );
-          } else if (isActive) {
-            primaryAction = PillButton(
-              label: 'Unload',
-              onPressed: disableActions ? null : () => controller.unloadModel(),
-            );
-          } else {
-            primaryAction = _SoftButton(
-              label: 'Load',
-              onPressed: disableActions
-                  ? null
-                  : () => controller.loadModel(actualFilename),
-            );
-          }
-        } else {
-          primaryAction = _RoundIconButton(
-            icon: Icons.arrow_downward_rounded,
-            tooltip: 'Download',
-            onPressed:
-                disableActions ? null : () => _confirmDownload(context, model),
+      } else if (isDownloaded) {
+        if (isThisModelLoading) {
+          primaryAction = Text(
+              isThisImageModelLoading ? 'Loading…' : '$loadPercent%',
+              style: t.small.copyWith(
+                  color: t.accent,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: _tabular));
+        } else if (isActive) {
+          primaryAction = AppTag('Loaded', color: t.green);
+        } else if (library) {
+          primaryAction = _SoftButton(
+            label: 'Load',
+            onPressed: disableActions
+                ? null
+                : () => controller.loadModel(actualFilename),
           );
+        } else {
+          primaryAction = Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.check_rounded, size: 15, color: t.muted),
+            const SizedBox(width: 4),
+            Text('On phone', style: t.small),
+          ]);
         }
+      } else {
+        primaryAction = _RoundIconButton(
+          icon: Icons.arrow_downward_rounded,
+          tooltip: 'Download',
+          onPressed:
+              disableActions ? null : () => _confirmDownload(context, model),
+        );
       }
+      final VoidCallback? load = isDownloaded && !isActive && !disableActions
+          ? () => controller.loadModel(actualFilename)
+          : null;
 
       // Secondary actions live in the ⋯ sheet.
       final secondary = <(IconData, String, bool, VoidCallback)>[
@@ -1546,60 +1606,67 @@ class ModelView extends GetView<ModelController> {
       final filter = controller.localFilter.value.isEmpty
           ? controller.defaultLocalFilter
           : controller.localFilter.value;
-      final recommended = model.recommendedFor.contains(filter);
-      // Skip the label the current filter already implies.
-      final capability = [
-        if (controller.isVisionModel(model) && filter != 'vision') 'Vision',
-        if (controller.isUncensoredModel(model) && filter != 'uncensored')
-          'Uncensored',
+      final recommended = !library && model.recommendedFor.contains(filter);
+      // In Browse, skip the label the selected type already implies.
+      final (name, variant) = _cleanName(model);
+      // Uncensored is a tag next to the name; the type is the section (My
+      // models) or the selected chip (Browse), so neither repeats here.
+      final uncensored = controller.isUncensoredModel(model) &&
+          (library || filter != 'uncensored');
+      final subtitle = [
+        controller.modelSizeLabel(model),
+        if (runtime == 'LiteRT') 'LiteRT',
+        if (variant != null) variant,
+        if (!library && controller.isVisionModel(model) && filter != 'vision')
+          'Vision',
         if (model.isImported) 'Imported',
-      ];
-      final subtitle = isActive
-          ? [
-              'Loaded',
-              if (isThisModelLoading) 'loading…',
-              controller.modelSizeLabel(model),
-              if (runtime != null) runtime,
-            ].join(' · ')
-          : [
-              controller.modelSizeLabel(model),
-              if (runtime != null) runtime,
-              ...capability,
-            ].join(' · ');
+      ].join(' · ');
+      void openDetails() => _showModelDetails(
+          context, model, subtitle, secondary, disableActions, primaryAction,
+          onLoad: load);
       return Material(
-        color: isActive ? t.accent.withValues(alpha: 0.06) : Colors.transparent,
+        color: Colors.transparent,
         child: InkWell(
-          onTap: () => _showModelDetails(context, model, subtitle, secondary,
-              disableActions, primaryAction),
+          // Tap or long-press opens the details sheet; loading has its own
+          // button on the row.
+          onTap: openDetails,
+          onLongPress: openDetails,
           splashFactory: NoSplash.splashFactory,
-          // No pressed tint: it could stay stuck while a sheet opens.
+          // No pressed/focus tint at all: it could stay stuck on the row
+          // after a sheet opens or a model starts loading.
           highlightColor: Colors.transparent,
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 13, 12, 13),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
+                    _ModelAvatar(
+                        name: name,
+                        image: controller.isImageModel(model),
+                        loaded: isActive),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(children: [
                             Flexible(
-                              child: Text(model.name,
+                              child: Text(name,
                                   style: t.body
                                       .copyWith(fontWeight: FontWeight.w500),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis),
                             ),
+                            if (uncensored) ...[
+                              const SizedBox(width: 8),
+                              AppTag('Uncensored', color: t.orange),
+                            ],
                           ]),
                           const SizedBox(height: 3),
                           Row(children: [
-                            if (isActive) ...[
-                              StatusDot(t.green),
-                              const SizedBox(width: 6),
-                            ],
                             Flexible(
                               child: Text.rich(
                                 TextSpan(children: [
@@ -1612,9 +1679,7 @@ class ModelView extends GetView<ModelController> {
                                     ),
                                   TextSpan(text: subtitle),
                                 ]),
-                                style: t.small.copyWith(
-                                    fontFeatures: _tabular,
-                                    color: isActive ? t.green : null),
+                                style: t.small.copyWith(fontFeatures: _tabular),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -1623,7 +1688,7 @@ class ModelView extends GetView<ModelController> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     primaryAction,
                   ],
                 ),
@@ -1641,34 +1706,225 @@ class ModelView extends GetView<ModelController> {
     });
   }
 
-  /// "On this phone" and "Available" groups for the current filter.
-  List<Widget> _buildModelSections(BuildContext context, List<AiModel> models) {
-    final onPhone =
-        models.where((m) => controller.isDownloaded(m.filename)).toList();
-    final available =
-        models.where((m) => !controller.isDownloaded(m.filename)).toList();
-    final sortAction = _TextAction(
-      icon: Icons.swap_vert_rounded,
-      label: controller.sortSmallestFirst.value ? 'By size' : 'By name',
-      onTap: controller.toggleSort,
-    );
-    Widget group(List<AiModel> list) => AppGroup(children: [
-          for (final m in list) _buildModelCard(context, m),
-        ]);
+  _TextAction _sortAction() => _TextAction(
+        icon: Icons.swap_vert_rounded,
+        label: controller.sortSmallestFirst.value ? 'By size' : 'By name',
+        onTap: controller.toggleSort,
+      );
+
+  /// My models: everything on the phone. Tap a row to load it.
+  List<Widget> _buildLibrary(BuildContext context) {
+    final models = controller.displayedModels
+        .where((m) => controller.isDownloaded(m.filename))
+        .toList();
+    if (models.isEmpty) return [_buildEmptyLibrary(context)];
+    final t = AppTokens.of(context);
+    final image = models.where(controller.isImageModel).toList();
+    final vision = models
+        .where(
+            (m) => !controller.isImageModel(m) && controller.isVisionModel(m))
+        .toList();
+    final chat =
+        models.where((m) => !image.contains(m) && !vision.contains(m)).toList();
+    var first = true;
+    List<Widget> group(String title, List<AiModel> list) {
+      if (list.isEmpty) return const [];
+      final header = SectionHeader(title,
+          padding: EdgeInsets.fromLTRB(4, first ? 14 : 22, 0, 8));
+      first = false;
+      return [
+        header,
+        AppGroup(children: [
+          for (final m in list) _buildModelCard(context, m, library: true),
+        ]),
+      ];
+    }
+
     return [
-      if (onPhone.isNotEmpty) ...[
-        SectionHeader('On this phone · ${onPhone.length}',
-            padding: const EdgeInsets.fromLTRB(4, 20, 0, 8),
-            trailing: available.isEmpty ? sortAction : null),
-        group(onPhone),
-      ],
-      if (available.isNotEmpty) ...[
-        SectionHeader('Available · ${available.length}',
-            padding: EdgeInsets.fromLTRB(4, onPhone.isEmpty ? 20 : 24, 0, 8),
-            trailing: sortAction),
-        group(available),
-      ],
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 0, 0),
+        child: Row(children: [
+          Expanded(
+              child:
+                  Text('On this phone · ${models.length}', style: t.caption)),
+          _sortAction(),
+        ]),
+      ),
+      ...group('Chat', chat),
+      ...group('Vision', vision),
+      ...group('Image', image),
     ];
+  }
+
+  /// Browse: the catalogue for the selected type, recommended pick first.
+  List<Widget> _buildBrowse(BuildContext context) {
+    final models = controller.filteredDisplayedModels;
+    if (models.isEmpty) {
+      return [
+        const EmptyState(
+            icon: Icons.search_off_rounded,
+            title: 'No models here yet',
+            message: 'Try another type.'),
+      ];
+    }
+    return [
+      SectionHeader('All ${models.length}',
+          padding: const EdgeInsets.fromLTRB(4, 20, 0, 8),
+          trailing: _sortAction()),
+      AppGroup(children: [
+        for (final m in models) _buildModelCard(context, m),
+      ]),
+    ];
+  }
+
+  // ── Featured picks ────────────────────────────────────────────────────
+
+  static const _pitch = {
+    'general': 'Best for chat',
+    'vision': 'Understands photos',
+    'uncensored': 'No filters',
+    'image': 'Creates images',
+  };
+
+  /// Horizontal row of the recommended pick for each type.
+  Widget _buildFeatured(BuildContext context) {
+    final t = AppTokens.of(context);
+    final picks = <AiModel>[];
+    for (final type in ['general', 'vision', 'uncensored', 'image']) {
+      final m = controller.availableModels
+          .firstWhereOrNull((m) => m.recommendedFor.contains(type));
+      if (m != null && !picks.contains(m)) picks.add(m);
+    }
+    if (picks.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+        child: Text('Recommended', style: t.label),
+      ),
+      SizedBox(
+        height: 172,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          clipBehavior: Clip.none,
+          itemCount: picks.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (_, i) => _buildFeaturedCard(context, picks[i]),
+        ),
+      ),
+      const SizedBox(height: 18),
+    ]);
+  }
+
+  Widget _buildFeaturedCard(BuildContext context, AiModel model) {
+    return Obx(() {
+      final t = AppTokens.of(context);
+      final (name, _) = _cleanName(model);
+      final downloaded = controller.isDownloaded(model.filename);
+      final downloading = controller.isDownloadingModel(model.filename);
+      final busy = controller.isImporting.value ||
+          Get.find<InferenceService>().isLoadingModel.value;
+      final type = model.recommendedFor
+          .firstWhere(_pitch.containsKey, orElse: () => 'general');
+      final Widget action;
+      if (downloading) {
+        action = _DownloadRing(filename: model.filename);
+      } else if (downloaded) {
+        action = Icon(Icons.check_circle_rounded, size: 22, color: t.green);
+      } else {
+        action = _RoundIconButton(
+          icon: Icons.arrow_downward_rounded,
+          tooltip: 'Download',
+          onPressed: busy ? null : () => _confirmDownload(context, model),
+        );
+      }
+      return SizedBox(
+        width: 168,
+        child: Material(
+          color: t.surface,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            splashFactory: NoSplash.splashFactory,
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+            onTap: () => _showModelDetails(context, model,
+                controller.modelSizeLabel(model), const [], busy, null),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ModelAvatar(
+                      name: name,
+                      image: controller.isImageModel(model),
+                      size: 44),
+                  const Spacer(),
+                  Text(name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: t.bodyStrong.copyWith(height: 1.25)),
+                  const SizedBox(height: 2),
+                  Text(_pitch[type]!, style: t.small),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(
+                      child: Text(controller.modelSizeLabel(model),
+                          style: t.small.copyWith(fontFeatures: _tabular)),
+                    ),
+                    action,
+                  ]),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  static final _quantPattern = RegExp(
+      r'\b(I?Q\d(?:_[A-Z0-9]+)*|F16|FP16|BF16|F32)\b',
+      caseSensitive: false);
+
+  /// Short display name plus the variant (quant or format) shown as detail:
+  /// "Gemma 3 1B Instruct (Q4_0)" → ("Gemma 3 1B", "Q4_0").
+  (String, String?) _cleanName(AiModel model) {
+    var raw = model.isImported ? _prettyModel(model.name) : model.name;
+    String? variant;
+    final quant = _quantPattern.firstMatch(raw);
+    if (quant != null) variant = quant.group(0)!.toUpperCase();
+
+    // Parenthesised extras: drop the quant / runtime, keep e.g. "SD 1.5".
+    final extras = <String>[];
+    raw = raw.replaceAllMapped(RegExp(r'\(([^)]*)\)'), (m) {
+      final inner = m.group(1)!.trim();
+      if (!_quantPattern.hasMatch(inner) &&
+          !inner.toLowerCase().startsWith('litert')) {
+        extras.add(inner);
+      }
+      return ' ';
+    });
+    raw = raw.replaceAll(_quantPattern, ' ');
+
+    // File-style names ("qwen2.5-1.5b-instruct"): split and capitalise.
+    final fileStyle = model.isImported || raw == raw.toLowerCase();
+    final words = raw
+        .split(fileStyle ? RegExp(r'[\s_-]+') : RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .where((w) =>
+            !{'instruct', 'uncensored', 'it', 'gguf'}.contains(w.toLowerCase()))
+        .map((w) {
+      if (!fileStyle) return w;
+      if (RegExp(r'^(e?\d+(\.\d+)?[bm])$', caseSensitive: false).hasMatch(w)) {
+        return w.toUpperCase();
+      }
+      return w[0].toUpperCase() + w.substring(1);
+    }).toList();
+    final name = words.join(' ').trim();
+    final detail = [if (variant != null) variant, ...extras];
+    return (
+      name.isEmpty ? model.name : name,
+      detail.isEmpty ? null : detail.join(' · ')
+    );
   }
 
   /// ⋯ sheet: full description, details and the less common actions.
@@ -1678,8 +1934,9 @@ class ModelView extends GetView<ModelController> {
     String meta,
     List<(IconData, String, bool, VoidCallback)> actions,
     bool disabled,
-    Widget? primaryAction,
-  ) {
+    Widget? primaryAction, {
+    VoidCallback? onLoad,
+  }) {
     final downloaded = controller.isDownloaded(model.filename);
     showAppSheet<void>(
       context,
@@ -1696,6 +1953,17 @@ class ModelView extends GetView<ModelController> {
             if (tags.isNotEmpty) ...[
               const SizedBox(height: 12),
               Wrap(spacing: 6, runSpacing: 6, children: tags),
+            ],
+            if (onLoad != null) ...[
+              const SizedBox(height: 18),
+              PrimaryButton(
+                label: 'Load model',
+                icon: Icons.play_arrow_rounded,
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  onLoad();
+                },
+              ),
             ],
             if (!downloaded && !disabled) ...[
               const SizedBox(height: 18),
@@ -1883,7 +2151,7 @@ class _DownloadRing extends StatelessWidget {
   }
 }
 
-/// Tonal accent pill ("Load"): clear but quieter than a solid button.
+/// Soft accent pill ("Load") for list rows.
 class _SoftButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -2080,6 +2348,172 @@ class _SquareIconButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Checklist of model files found in a folder. Files already in the app
+/// are shown but can't be picked again.
+class _FolderImportList extends StatefulWidget {
+  final List<FolderModelFile> files;
+  final ModelController controller;
+  const _FolderImportList({required this.files, required this.controller});
+
+  @override
+  State<_FolderImportList> createState() => _FolderImportListState();
+}
+
+class _FolderImportListState extends State<_FolderImportList> {
+  late final Set<String> _selected = {
+    for (final f in widget.files)
+      if (!_imported(f)) f.uri,
+  };
+
+  bool _imported(FolderModelFile f) => widget.controller.isDownloaded(f.name);
+
+  static String _size(int bytes) => bytes >= 1024 * 1024 * 1024
+      ? '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB'
+      : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
+    final picked =
+        widget.files.where((f) => _selected.contains(f.uri)).toList();
+    final total = picked.fold<int>(0, (sum, f) => sum + f.size);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      AppGroup(children: [
+        for (final f in widget.files)
+          AppRow(
+            title: f.name,
+            subtitle: _imported(f)
+                ? '${_size(f.size)} · Already in the app'
+                : _size(f.size),
+            trailing: Checkbox(
+              value: _imported(f) ? true : _selected.contains(f.uri),
+              onChanged: _imported(f)
+                  ? null
+                  : (v) => setState(() => v == true
+                      ? _selected.add(f.uri)
+                      : _selected.remove(f.uri)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5)),
+              activeColor: t.accent,
+            ),
+            onTap: _imported(f)
+                ? null
+                : () => setState(() => _selected.contains(f.uri)
+                    ? _selected.remove(f.uri)
+                    : _selected.add(f.uri)),
+          ),
+      ]),
+      const SizedBox(height: 16),
+      PrimaryButton(
+        label: picked.isEmpty
+            ? 'Nothing selected'
+            : 'Import ${picked.length} · ${_size(total)}',
+        icon: Icons.download_rounded,
+        onPressed: picked.isEmpty ? null : () => Navigator.pop(context, picked),
+      ),
+      const SizedBox(height: 8),
+      Text('Files are copied into app storage, so make sure there is room.',
+          textAlign: TextAlign.center, style: t.small),
+    ]);
+  }
+}
+
+/// Rounded monogram tile coloured by model family, so rows are easy to tell
+/// apart at a glance.
+class _ModelAvatar extends StatelessWidget {
+  final String name;
+  final bool image;
+  final bool loaded;
+  final double size;
+  const _ModelAvatar(
+      {required this.name,
+      this.image = false,
+      this.loaded = false,
+      this.size = 38});
+
+  static const _families = <(String, String, Color)>[
+    ('gemma', 'Ge', Color(0xFF4285F4)),
+    ('qwen', 'Qw', Color(0xFF7C5CFF)),
+    ('lfm', 'LF', Color(0xFF14B8A6)),
+    ('llama', 'Ll', Color(0xFFF97316)),
+    ('phi', 'Ph', Color(0xFF6366F1)),
+    ('mistral', 'Mi', Color(0xFFF59E0B)),
+    ('deepseek', 'DS', Color(0xFF0EA5E9)),
+    ('smol', 'Sm', Color(0xFF22C55E)),
+    ('minicpm', 'Mc', Color(0xFFE11D48)),
+  ];
+  static const _fallback = [
+    Color(0xFF8B5CF6),
+    Color(0xFF06B6D4),
+    Color(0xFF84CC16),
+    Color(0xFFEC4899),
+    Color(0xFFF59E0B),
+  ];
+
+  (String, Color) _style() {
+    final lower = name.toLowerCase();
+    if (image) {
+      final letters = name.replaceAll(RegExp(r'[^A-Za-z]'), '');
+      return (
+        letters.length >= 2 ? letters.substring(0, 2) : 'SD',
+        const Color(0xFFEC4899)
+      );
+    }
+    for (final (key, mono, color) in _families) {
+      if (lower.contains(key)) return (mono, color);
+    }
+    final letters = name.replaceAll(RegExp(r'[^A-Za-z]'), '');
+    final mono = letters.isEmpty
+        ? '?'
+        : letters.substring(0, letters.length >= 2 ? 2 : 1);
+    return (mono, _fallback[name.hashCode.abs() % _fallback.length]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = AppTokens.of(context);
+    final (mono, color) = _style();
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(clipBehavior: Clip.none, children: [
+        Container(
+          width: size,
+          height: size,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: t.isDark ? 0.22 : 0.14),
+            borderRadius: BorderRadius.circular(size * 0.3),
+          ),
+          child: Text(
+            mono[0].toUpperCase() + mono.substring(1),
+            style: GoogleFonts.inter(
+              fontSize: size * 0.36,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.3,
+              color: t.isDark ? Color.lerp(color, Colors.white, 0.35) : color,
+            ),
+          ),
+        ),
+        if (loaded)
+          Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: t.green,
+                shape: BoxShape.circle,
+                border: Border.all(color: t.surface, width: 2),
+              ),
+            ),
+          ),
+      ]),
     );
   }
 }
